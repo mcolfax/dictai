@@ -48,11 +48,17 @@ The installer handles everything automatically:
 
 | Action | Default |
 |--------|---------|
-| Start recording | Press **Right Option (⌥)** |
+| Start recording | Press **Right Option (⌥)** (configurable) |
 | Stop recording | Press **Right Option (⌥)** again |
 | Open settings UI | http://localhost:5001 |
 
 Text is automatically transcribed, cleaned up by AI, and pasted into whatever app you're using.
+
+The menu bar icon shows your current status:
+- 🖤 **Black waveform** — Dictate is enabled, ready to record
+- 🟠 **Amber waveform** — Recording in progress
+
+Your hotkey is fully configurable — assign any key or mouse button from the settings UI at http://localhost:5001
 
 ---
 
@@ -129,6 +135,16 @@ All processing happens on your Mac. Nothing is sent to any server.
 **Ollama errors?**  
 → Make sure Ollama is running: `ollama serve`  
 → Make sure the model is downloaded: `ollama pull llama3.2`
+
+---
+
+## Support This Project ☕
+
+Dictate is free and always will be. If it's saving you time and you'd like to say thanks, a small tip goes a long way toward keeping updates coming.
+
+**Venmo: [@mcolfax](https://venmo.com/mcolfax)**
+
+No pressure — enjoying the app is thanks enough. 🙏
 
 ---
 
