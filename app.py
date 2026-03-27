@@ -73,6 +73,8 @@ class DictateApp(rumps.App):
             try:
                 urllib.request.urlopen("http://127.0.0.1:5001", timeout=1)
                 subprocess.run(["open", "http://127.0.0.1:5001"])
+                self.template = True
+                self.icon = os.path.join(APP_RESOURCES, "icon_menubar.png")
                 break
             except Exception:
                 time.sleep(0.5)
