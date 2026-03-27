@@ -20,7 +20,7 @@ CONFIG_FILE = os.path.join(_DATA_DIR, 'config.json')
 STATS_FILE  = os.path.join(_DATA_DIR, 'stats.json')
 SAMPLE_RATE    = 16000
 OLLAMA_URL     = "http://localhost:11434/api/generate"
-APP_VERSION    = "1.2.3"
+APP_VERSION    = "1.2.5"
 GITHUB_RAW     = "https://raw.githubusercontent.com/mcolfax/dictate/main"
 MAX_RECORD_SECS = 120
 
@@ -633,8 +633,10 @@ HTML = r"""<!DOCTYPE html>
       <div class="field">
         <div class="field-label">Whisper Model</div>
         <select id="whisper_model" onchange="autoSave()">
-          <option value="mlx-community/whisper-small-mlx">small (fast)</option>
-          <option value="mlx-community/whisper-medium-mlx">medium (balanced)</option>
+          <option value="mlx-community/whisper-tiny-mlx">tiny (fastest)</option>
+          <option value="mlx-community/whisper-base-mlx">base (fast)</option>
+          <option value="mlx-community/whisper-small-mlx">small (recommended)</option>
+          <option value="mlx-community/whisper-medium-mlx">medium (accurate)</option>
           <option value="mlx-community/whisper-large-v3-mlx">large-v3 (best)</option>
         </select>
       </div>
@@ -642,7 +644,9 @@ HTML = r"""<!DOCTYPE html>
         <div class="field-label">Ollama Model</div>
         <select id="ollama_model" onchange="autoSave()">
           <option value="llama3.2">llama3.2 (recommended)</option>
-          <option value="llama3.2:1b">llama3.2:1b (fastest)</option>
+          <option value="llama3.2:1b">llama3.2:1b (fast)</option>
+          <option value="qwen2.5:0.5b">qwen2.5:0.5b (fastest)</option>
+          <option value="qwen2.5:1.5b">qwen2.5:1.5b (fast)</option>
           <option value="mistral">mistral</option>
           <option value="llama3.1">llama3.1</option>
         </select>
