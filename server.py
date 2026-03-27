@@ -20,7 +20,7 @@ CONFIG_FILE = os.path.join(_DATA_DIR, 'config.json')
 STATS_FILE  = os.path.join(_DATA_DIR, 'stats.json')
 SAMPLE_RATE    = 16000
 OLLAMA_URL     = "http://localhost:11434/api/generate"
-APP_VERSION = "1.3.1"
+APP_VERSION    = "1.3.2"
 GITHUB_RAW     = "https://raw.githubusercontent.com/mcolfax/dictate/main"
 MAX_RECORD_SECS = 120
 
@@ -147,9 +147,20 @@ def _ensure_stream():
                 dtype="int16", blocksize=1600
             )
             _persistent_stream.start()
-            print("🎤 Audio stream ready")
+            print("🎤 Audio stream opened")
         except Exception as e:
             print(f"⚠️  Stream init error: {e}")
+
+def _close_stream():
+    global _persistent_stream
+    if _persistent_stream is not None:
+        try:
+            _persistent_stream.stop()
+            _persistent_stream.close()
+        except Exception:
+            pass
+        _persistent_stream = None
+        print("🎤 Audio stream closed")
 
 def _record_worker():
     global _last_sound_time, _persistent_stream
@@ -191,6 +202,7 @@ def start_recording():
         state["recording"]        = True
         state["_recorded_frames"] = []
     _stop_event.clear()
+    _ensure_stream()  # Open mic exactly when recording starts
     play_sound("start")
     print("🎙️  Recording…")
     _recording_thread = threading.Thread(target=_record_worker, daemon=True)
@@ -204,6 +216,7 @@ def stop_and_transcribe():
     _stop_event.set()
     if _recording_thread:
         _recording_thread.join(timeout=2)
+    _close_stream()  # Close mic exactly when recording ends
     play_sound("stop")
 
     frames = state.get("_recorded_frames", [])
