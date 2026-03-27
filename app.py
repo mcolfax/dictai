@@ -23,11 +23,13 @@ class DictateApp(rumps.App):
     def __init__(self):
         super().__init__("", quit_button=None)
         self.icon     = os.path.join(APP_RESOURCES, "icon_menubar.png")
-        self.template = True
+        self.template = False
         self._enabled        = False
+        self._recording      = False
         self._server_proc    = None
         self._ollama_proc    = None
         self._update_version = None
+        self._current_icon   = "icon_menubar.png"
 
         self.toggle_item = rumps.MenuItem("Enable Dictation", callback=self.toggle_dictation)
         self.update_item = rumps.MenuItem("", callback=self.do_update)
@@ -43,6 +45,7 @@ class DictateApp(rumps.App):
 
         threading.Thread(target=self._start_backend, daemon=True).start()
         threading.Thread(target=self._check_for_updates, daemon=True).start()
+        threading.Thread(target=self._poll_state, daemon=True).start()
 
     def _start_backend(self):
         try:
@@ -70,6 +73,35 @@ class DictateApp(rumps.App):
                 break
             except Exception:
                 time.sleep(0.5)
+
+    def _poll_state(self):
+        """Poll recording state every 0.5s — only touches icon when state changes."""
+        while True:
+            try:
+                resp      = urllib.request.urlopen("http://127.0.0.1:5001/api/status", timeout=1)
+                data      = json.loads(resp.read())
+                enabled   = data.get("enabled", False)
+                recording = data.get("recording", False)
+
+                if recording:
+                    new_icon = "icon_menubar_on.png"   # amber — mic hot
+                elif enabled:
+                    new_icon = "icon_menubar.png"       # white — enabled, idle
+                else:
+                    new_icon = "icon_menubar.png"       # white — disabled
+
+                if new_icon != self._current_icon:
+                    self._current_icon = new_icon
+                    self.template = recording is False  # color when recording, mono when idle
+                    self.icon = os.path.join(APP_RESOURCES, new_icon)
+
+                if enabled != self._enabled:
+                    self._enabled = enabled
+                    self.toggle_item.title = "Disable Dictation" if enabled else "Enable Dictation"
+
+            except Exception:
+                pass
+            time.sleep(0.5)
 
     def _check_for_updates(self):
         """Check GitHub for a newer version. Runs on startup and every hour."""
@@ -131,20 +163,6 @@ class DictateApp(rumps.App):
         except Exception as e:
             rumps.alert("Update Failed", f"Could not download update:\n{e}")
 
-    @rumps.timer(1)
-    def sync_state(self, _):
-        try:
-            resp    = urllib.request.urlopen("http://127.0.0.1:5001/api/status", timeout=1)
-            data    = json.loads(resp.read())
-            enabled = data.get("enabled", False)
-            if enabled != self._enabled:
-                self._enabled = enabled
-                self.toggle_item.title = "Disable Dictation" if enabled else "Enable Dictation"
-                self.icon = os.path.join(APP_RESOURCES,
-                    "icon_menubar_on.png" if enabled else "icon_menubar.png"
-                )
-        except Exception:
-            pass
 
     def open_ui(self, _):
         subprocess.run(["open", "http://127.0.0.1:5001"])
@@ -155,6 +173,15 @@ class DictateApp(rumps.App):
                 urllib.request.Request("http://127.0.0.1:5001/api/toggle", method="POST"),
                 timeout=2
             )
+            # Flip state locally — no timer needed, no flicker
+            self._enabled = not self._enabled
+            if self._enabled:
+                self.toggle_item.title = "Disable Dictation"
+                self._current_icon = "icon_menubar_on.png"
+            else:
+                self.toggle_item.title = "Enable Dictation"
+                self._current_icon = "icon_menubar.png"
+            self.icon = os.path.join(APP_RESOURCES, self._current_icon)
         except Exception as e:
             print(f"Toggle error: {e}")
 

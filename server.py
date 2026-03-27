@@ -135,35 +135,52 @@ def apply_vocabulary(text):
 
 # ── AUDIO — uses sd.rec() chunks to avoid Python 3.14 libffi/CoreAudio crash ──
 
-def _record_worker():
-    global _last_sound_time
-    chunk_secs = 0.1
-    chunk_size = int(SAMPLE_RATE * chunk_secs)
-    all_frames = []
-    _last_sound_time = time.time()
+# Persistent stream — stays open to avoid macOS mic indicator flicker
+_persistent_stream = None
 
-    while not _stop_event.is_set() and state["recording"]:
+def _ensure_stream():
+    global _persistent_stream
+    if _persistent_stream is None or not _persistent_stream.active:
         try:
-            chunk = sd.rec(chunk_size, samplerate=SAMPLE_RATE,
-                           channels=1, dtype="int16", blocking=True)
-            all_frames.append(chunk.copy())
+            _persistent_stream = sd.InputStream(
+                samplerate=SAMPLE_RATE, channels=1,
+                dtype="int16", blocksize=1600
+            )
+            _persistent_stream.start()
+            print("🎤 Audio stream ready")
         except Exception as e:
-            print(f"⚠️  Audio error: {e}")
-            break
+            print(f"⚠️  Stream init error: {e}")
 
-        # Pause detection
-        if config.get("pause_detection", True):
-            rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
-            if rms > 200:
-                _last_sound_time = time.time()
-            elif time.time() - _last_sound_time >= float(config.get("pause_seconds", 2.0)):
-                print("🤫 Silence detected — auto-stopping")
+def _record_worker():
+    global _last_sound_time, _persistent_stream
+    _last_sound_time = time.time()
+    all_frames = []
+
+    _ensure_stream()
+    if _persistent_stream is None:
+        print("⚠️  No audio stream available")
+        return
+
+    try:
+        while not _stop_event.is_set() and state["recording"]:
+            chunk, _ = _persistent_stream.read(1600)
+            all_frames.append(chunk.copy())
+
+            if config.get("pause_detection", True):
+                rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
+                if rms > 200:
+                    _last_sound_time = time.time()
+                elif time.time() - _last_sound_time >= float(config.get("pause_seconds", 2.0)):
+                    print("🤫 Silence detected — auto-stopping")
+                    state["recording"] = False
+                    break
+
+            if len(all_frames) * 0.1 >= MAX_RECORD_SECS:
                 state["recording"] = False
                 break
-
-        if len(all_frames) * chunk_secs >= MAX_RECORD_SECS:
-            state["recording"] = False
-            break
+    except Exception as e:
+        print(f"⚠️  Audio error: {e}")
+        _persistent_stream = None
 
     state["_recorded_frames"] = all_frames
 
@@ -231,15 +248,16 @@ def stop_and_transcribe():
 # ── MIC TEST ──────────────────────────────────────────────────────────────────
 
 def _mic_test_worker():
-    chunk_size = int(SAMPLE_RATE * 0.1)
-    while state["mic_testing"]:
-        try:
-            chunk = sd.rec(chunk_size, samplerate=SAMPLE_RATE,
-                           channels=1, dtype="int16", blocking=True)
+    _ensure_stream()
+    if _persistent_stream is None:
+        return
+    try:
+        while state["mic_testing"]:
+            chunk, _ = _persistent_stream.read(1600)
             rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
             state["mic_level"] = min(100, int((rms / 32768) * 800))
-        except Exception:
-            break
+    except Exception as e:
+        print(f"⚠️  Mic test error: {e}")
 
 def start_mic_test():
     if state["mic_testing"]: return
