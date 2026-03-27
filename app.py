@@ -148,22 +148,30 @@ class DictateApp(rumps.App):
             return
 
         try:
-            # Download update script
-            update_script = urllib.request.urlopen(UPDATE_URL, timeout=10).read().decode()
-            script_path   = os.path.join(APP_DATA_DIR, "update.sh")
-            with open(script_path, "w") as f:
-                f.write(update_script)
-            os.chmod(script_path, 0o755)
+            # Download each file directly into the app bundle
+            files_to_update = ["server.py", "app.py", "make_icons.py"]
+            for fname in files_to_update:
+                url  = f"{GITHUB_RAW}/{fname}"
+                dest = os.path.join(APP_RESOURCES, fname)
+                data = urllib.request.urlopen(url, timeout=15).read()
+                with open(dest, "wb") as f:
+                    f.write(data)
+                print(f"✅ Updated {fname}")
 
-            # Run update in background, quit this instance
-            subprocess.Popen(
-                ["bash", script_path, APP_DATA_DIR, APP_RESOURCES],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
+            # Also update local dictation folder
+            for fname in files_to_update:
+                src  = os.path.join(APP_RESOURCES, fname)
+                dest = os.path.join(APP_DATA_DIR, fname)
+                import shutil
+                shutil.copy2(src, dest)
+
             if self._server_proc:
                 self._server_proc.terminate()
             if self._ollama_proc:
                 self._ollama_proc.terminate()
+
+            # Relaunch app
+            subprocess.Popen(["open", "/Applications/Dictate.app"])
             rumps.quit_application()
         except Exception as e:
             rumps.alert("Update Failed", f"Could not download update:\n{e}")

@@ -225,7 +225,7 @@ def stop_and_transcribe():
         app_tones   = config.get("app_tones", {})
         active_tone = app_tones.get(active_app, config.get("tone", "neutral"))
         print(f"📝 Raw: {raw_text}")
-        if config.get("cleanup", True):
+        if config.get("cleanup", True) and len(corrected.split()) > 3:
             final = cleanup_with_ollama(corrected, active_tone)
             print(f"✨ Cleaned: {final}")
         else:
@@ -293,7 +293,7 @@ def cleanup_with_ollama(text, tone_override=None):
     req = urllib.request.Request(OLLAMA_URL, data=payload,
                                   headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=15) as resp:
             return json.loads(resp.read())["response"].strip()
     except Exception as e:
         print(f"⚠️  Ollama error: {e}")
@@ -720,7 +720,7 @@ HTML = r"""<!DOCTYPE html>
   </div>
   <div class="divider"></div>
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
-    <div style="font-size:11px;color:var(--dim)">dict<span style="color:var(--amber)">.</span>ate &nbsp;&middot;&nbsp; <span id="versionBadge">v1.0.0</span></div>
+    <div style="font-size:11px;color:var(--dim)">dict<span style="color:var(--amber)">.</span>ate &nbsp;&middot;&nbsp; <span id="versionBadge">loading...</span></div>
     <button onclick="checkForUpdates()" id="updateBtn" style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);background:var(--muted);border:none;border-radius:3px;padding:4px 12px;cursor:pointer;font-family:'JetBrains Mono',monospace;transition:all .15s;">Check for Updates</button>
   </div>
   <div id="updateBanner" style="display:none;background:rgba(245,158,11,.08);border:1px solid var(--amber);border-radius:4px;padding:12px 16px;margin-bottom:24px;align-items:center;justify-content:space-between;gap:16px;">
@@ -846,6 +846,10 @@ async function checkForUpdates(){
     }
   }catch(e){btn.textContent='Error — try again';setTimeout(()=>{btn.textContent='Check for Updates';btn.style.color='var(--dim)';},3000);}
 }
+// Load version on page load
+fetch('/api/version').then(r=>r.json()).then(data=>{
+  document.getElementById('versionBadge').textContent='v'+data.current;
+}).catch(()=>{});
 fetchStatus();setInterval(fetchStatus,1000);
 </script>
 </body>
