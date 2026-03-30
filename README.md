@@ -163,11 +163,11 @@ All processing happens on your Mac. Nothing is sent to any server.
 
 ## Support This Project ☕
 
-Dictate is free and always will be. If it's saving you time and you'd like to say thanks, a small tip goes a long way toward keeping updates coming.
+Dictate is free and always will be. If it's saving you time and you'd like to say thanks, some coffee $ goes a long way toward keeping updates coming.
 
 **Venmo: [@mcolfax](https://venmo.com/mcolfax)**
 
-No pressure — enjoying the app is thanks enough. 🙏
+No pressure
 
 ---
 
