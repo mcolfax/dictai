@@ -16,7 +16,7 @@ BREW_BIN        = "/opt/homebrew/bin/brew"
 
 CURRENT_VERSION = "1.4.0"
 GITHUB_USER     = "mcolfax"
-GITHUB_REPO     = "dictate"
+GITHUB_REPO     = "dictai"
 GITHUB_RAW      = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main"
 VERSION_URL     = f"{GITHUB_RAW}/version.txt"
 UPDATE_URL      = f"{GITHUB_RAW}/update.sh"
