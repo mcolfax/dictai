@@ -14,9 +14,9 @@ SERVER_PATH     = os.path.join(APP_RESOURCES, "server.py")
 OLLAMA_BIN      = "/opt/homebrew/bin/ollama"
 BREW_BIN        = "/opt/homebrew/bin/brew"
 
-CURRENT_VERSION = "1.4.0"
+CURRENT_VERSION = "1.4.1"
 GITHUB_USER     = "mcolfax"
-GITHUB_REPO     = "dictai"
+GITHUB_REPO     = "dictate"
 GITHUB_RAW      = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main"
 VERSION_URL     = f"{GITHUB_RAW}/version.txt"
 UPDATE_URL      = f"{GITHUB_RAW}/update.sh"
@@ -143,7 +143,7 @@ class DictateApp(rumps.App):
             self._setup_done = True
 
             rumps.notification(
-                "dict.ai is ready!",
+                "Dictate is ready!",
                 "Setup complete",
                 "Open http://localhost:5001 to configure your hotkey and settings.",
                 sound=True
@@ -224,7 +224,7 @@ class DictateApp(rumps.App):
                 if self._version_newer(latest, CURRENT_VERSION):
                     self._update_version = latest
                     rumps.notification(
-                        "dict.ai Update Available",
+                        "Dictate Update Available",
                         f"Version {latest} is ready",
                         "Click 'Update Available' in the menu bar to update.",
                         sound=False,
@@ -264,7 +264,7 @@ class DictateApp(rumps.App):
                     shutil.copy2(src, dst)
             if self._server_proc:  self._server_proc.terminate()
             if self._ollama_proc:  self._ollama_proc.terminate()
-            subprocess.Popen(["open", "/Applications/dict.ai.app"])
+            subprocess.Popen(["open", "/Applications/Dictate.app"])
             rumps.quit_application()
         except Exception as e:
             rumps.alert("Update Failed", f"Could not download update:\n{e}")

@@ -1,4 +1,4 @@
-# 🎤 dict.ai — Local AI Dictation for macOS
+# 🎤 Dictate — Local AI Dictation for macOS
 
 Free, private, system-wide voice dictation powered by Whisper + Ollama.  
 No cloud. No subscriptions. No API keys. Everything runs on your Mac.
@@ -15,12 +15,12 @@ No cloud. No subscriptions. No API keys. Everything runs on your Mac.
 
 ## Install
 
-1. Download **dict.ai.dmg** from the [latest release](https://github.com/mcolfax/dictai/releases/latest)
-2. Open the DMG and drag **dict.ai.app** to your Applications folder
-3. Open **dict.ai.app** from Applications  
+1. Download **Dictate.dmg** from the [latest release](https://github.com/mcolfax/dictate/releases/latest)
+2. Open the DMG and drag **Dictate.app** to your Applications folder
+3. Open **Dictate.app** from Applications  
    ⚠️ **Important:** Right-click → Open (do NOT double-click the first time)  
    If you see "damaged or incomplete", run this in Terminal:  
-   `xattr -cr /Applications/dict.ai.app`  
+   `xattr -cr /Applications/Dictate.app`  
    Then try opening again.
 4. The app will automatically install all dependencies in the background — watch the menu bar for progress
 5. Once setup is complete, a notification will appear and the UI will open
@@ -96,7 +96,7 @@ Your hotkey is fully configurable — assign any key or mouse button from the se
 
 ## Auto-start at Login
 
-**System Settings → General → Login Items → add dict.ai.app**
+**System Settings → General → Login Items → add Dictate.app**
 
 ---
 
@@ -118,18 +118,18 @@ You can also check manually from the settings UI (bottom of the page).
 → System Settings → Privacy & Security → Microphone → enable dict.ai
 
 **UI not loading?**  
-→ Make sure dict.ai.app is running (check menu bar for waveform icon)  
+→ Make sure Dictate.app is running (check menu bar for waveform icon)  
 → Open http://localhost:5001 in your browser
 
 **Ollama errors?**  
-→ Quit and reopen dict.ai.app — it will restart Ollama automatically
+→ Quit and reopen Dictate.app — it will restart Ollama automatically
 
 ---
 
 ## Uninstall
 
 ```bash
-rm -rf /Applications/dict.ai.app
+rm -rf /Applications/Dictate.app
 rm -rf ~/.dictate
 ```
 
