@@ -9,38 +9,30 @@ No cloud. No subscriptions. No API keys. Everything runs on your Mac.
 
 - macOS with **Apple Silicon** (M1/M2/M3/M4)
 - ~5GB free disk space (for AI models)
-- Internet connection during install only
+- Internet connection during first launch only
 
 ---
 
 ## Install
 
-```bash
-# 1. Download and unzip the latest release
-# 2. Open Terminal and run:
-cd ~/Downloads/Dictate
-chmod +x install.sh
-./install.sh
-```
+1. Download **Dictate.dmg** from the [latest release](https://github.com/mcolfax/dictate/releases/latest)
+2. Open the DMG and drag **Dictate.app** to your Applications folder
+3. Open **Dictate.app** from Applications  
+   *(right-click → Open the first time to bypass Gatekeeper)*
+4. The app will automatically install all dependencies in the background — watch the menu bar for progress
+5. Once setup is complete, a notification will appear and the UI will open
 
-The installer handles everything automatically:
-- Homebrew, Ollama, ffmpeg
-- Python virtual environment + all packages
-- Whisper transcription model
-- Ollama llama3.2 language model (~2GB)
-- Builds and installs Dictate.app to /Applications
-
-**Total install time: ~5 minutes** depending on internet speed.
+**Total setup time: ~5 minutes** depending on internet speed.
 
 ---
 
-## First Launch
+## First Launch Permissions
 
-1. Open **Dictate.app** from `/Applications`  
-   *(right-click → Open the first time to bypass Gatekeeper)*
-2. Grant **Microphone** permission when prompted
-3. Go to **System Settings → Privacy & Security → Accessibility** and enable **Dictate**
-4. Open **http://localhost:5001** in your browser to configure settings
+macOS will prompt for two permissions — both are required:
+
+- **Microphone** — for voice capture
+- **Accessibility** — for hotkey detection and text injection  
+  *(System Settings → Privacy & Security → Accessibility → enable Dictate)*
 
 ---
 
@@ -48,9 +40,9 @@ The installer handles everything automatically:
 
 | Action | Default |
 |--------|---------|
-| Start recording | Press **Right Option (⌥)** (configurable) |
+| Start recording | Press **Right Option (⌥)** — configurable |
 | Stop recording | Press **Right Option (⌥)** again |
-| Open settings UI | http://localhost:5001 |
+| Open settings | http://localhost:5001 |
 
 Text is automatically transcribed, cleaned up by AI, and pasted into whatever app you're using.
 
@@ -58,7 +50,7 @@ The menu bar icon shows your current status:
 - 🖤 **Black waveform** — Dictate is enabled, ready to record
 - 🟠 **Amber waveform** — Recording in progress
 
-Your hotkey is fully configurable — assign any key or mouse button from the settings UI at http://localhost:5001
+Your hotkey is fully configurable — assign any key or mouse button from the settings UI.
 
 ---
 
@@ -66,7 +58,7 @@ Your hotkey is fully configurable — assign any key or mouse button from the se
 
 - 🎙️ **System-wide** — works in any app (Slack, Mail, Notes, browser, etc.)
 - ✨ **AI cleanup** — fixes punctuation, removes filler words (um, uh, like)
-- 🔑 **Custom hotkey** — assign any key or mouse button
+- 🔑 **Custom hotkey** — any key or mouse button
 - 🎭 **Tone profiles** — neutral, professional, casual, concise
 - 📱 **Per-app tones** — different style per application
 - 📖 **Custom vocabulary** — fix words Whisper consistently mishears
@@ -75,6 +67,27 @@ Your hotkey is fully configurable — assign any key or mouse button from the se
 - 🔇 **Clipboard mode** — copy without auto-pasting
 - 🔈 **Sound feedback** — audio cues on start/stop/done
 - 🔄 **Auto-update** — notifies you when a new version is available
+- ⚡ **Multiple model options** — choose speed vs accuracy tradeoff
+
+---
+
+## Model Options
+
+### Whisper (transcription)
+| Model | Speed | Accuracy |
+|-------|-------|---------|
+| tiny | ⚡⚡⚡⚡⚡ | Basic |
+| base | ⚡⚡⚡⚡ | Decent |
+| small | ⚡⚡⚡ | Good (default) |
+| medium | ⚡⚡ | Better |
+| large-v3 | ⚡ | Best |
+
+### Ollama (AI cleanup)
+| Model | Speed | Quality |
+|-------|-------|---------|
+| qwen2.5:0.5b | ⚡⚡⚡⚡⚡ | Good |
+| llama3.2:1b | ⚡⚡⚡⚡ | Good |
+| llama3.2 | ⚡⚡⚡ | Great (default) |
 
 ---
 
@@ -88,7 +101,25 @@ Your hotkey is fully configurable — assign any key or mouse button from the se
 
 Dictate checks for updates automatically. When a new version is available you'll see **"⬆️ Update Available"** in the menu bar. Click it to update in one step.
 
-You can also check manually from the settings UI at http://localhost:5001 (bottom of the page).
+You can also check manually from the settings UI (bottom of the page).
+
+---
+
+## Troubleshooting
+
+**Hotkey not working?**  
+→ System Settings → Privacy & Security → Accessibility → make sure Dictate is enabled
+
+**Mic not picking up audio?**  
+→ Use the Mic Test in the settings UI  
+→ System Settings → Privacy & Security → Microphone → enable Dictate
+
+**UI not loading?**  
+→ Make sure Dictate.app is running (check menu bar for waveform icon)  
+→ Open http://localhost:5001 in your browser
+
+**Ollama errors?**  
+→ Quit and reopen Dictate.app — it will restart Ollama automatically
 
 ---
 
@@ -120,21 +151,6 @@ Cleaned text → pasted into your app
 ```
 
 All processing happens on your Mac. Nothing is sent to any server.
-
----
-
-## Troubleshooting
-
-**Hotkey not working?**  
-→ System Settings → Privacy & Security → Accessibility → make sure Dictate is enabled
-
-**Mic not picking up audio?**  
-→ Use the Mic Test in the settings UI to check your input level  
-→ System Settings → Privacy & Security → Microphone → enable Dictate
-
-**Ollama errors?**  
-→ Make sure Ollama is running: `ollama serve`  
-→ Make sure the model is downloaded: `ollama pull llama3.2`
 
 ---
 
