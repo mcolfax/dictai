@@ -10,12 +10,17 @@ import subprocess, sys, os, time, urllib.request, json, threading, shutil, re
 APP_RESOURCES   = os.environ.get("APP_RESOURCES", os.path.dirname(os.path.abspath(__file__)))
 APP_DATA_DIR    = os.environ.get("APP_DATA_DIR",  os.path.expanduser("~/.dictate"))
 VENV_PYTHON     = os.path.join(os.path.expanduser("~/Documents/dictation"), "venv", "bin", "python3")
-SERVER_PATH     = os.path.join(APP_RESOURCES, "server.py")
-SETTINGS_PATH   = os.path.join(APP_RESOURCES, "settings_window.py")
+def _runtime_path(fname):
+    """Prefer ~/.dictate/ version (written by auto-update), fall back to bundle."""
+    data = os.path.join(APP_DATA_DIR, fname)
+    return data if os.path.exists(data) else os.path.join(APP_RESOURCES, fname)
+
+SERVER_PATH     = _runtime_path("server.py")
+SETTINGS_PATH   = _runtime_path("settings_window.py")
 OLLAMA_BIN      = "/opt/homebrew/bin/ollama"
 BREW_BIN        = "/opt/homebrew/bin/brew"
 
-CURRENT_VERSION = "1.4.3"
+CURRENT_VERSION = "1.4.6"
 GITHUB_USER     = "mcolfax"
 GITHUB_REPO     = "dictate"
 GITHUB_RAW      = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main"
@@ -49,6 +54,16 @@ class DictateApp(rumps.App):
         _icon_path  = os.path.join(APP_RESOURCES, "icon_menubar.png")
         self.icon   = _icon_path
         self.template = True
+
+        # Override Python.app's default icon so NSAlert dialogs show Dictate's icon
+        try:
+            from AppKit import NSApplication, NSImage
+            _dock_icon = os.path.join(APP_RESOURCES, "icon_dock.png")
+            if os.path.exists(_dock_icon):
+                NSApplication.sharedApplication().setApplicationIconImage_(
+                    NSImage.alloc().initWithContentsOfFile_(_dock_icon))
+        except Exception:
+            pass
 
         self.toggle_item = rumps.MenuItem("Enable Dictation", callback=self.toggle_dictation)
         self.update_item = rumps.MenuItem("", callback=self.do_update)
@@ -177,7 +192,7 @@ class DictateApp(rumps.App):
         env["PATH"]         = "/opt/homebrew/bin:" + env.get("PATH", "")
         env["APP_DATA_DIR"] = APP_DATA_DIR
         self._server_proc = subprocess.Popen(
-            [VENV_PYTHON, SERVER_PATH],
+            [VENV_PYTHON, _runtime_path("server.py")],
             cwd=APP_DATA_DIR, env=env,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
@@ -254,8 +269,8 @@ class DictateApp(rumps.App):
     def do_update(self, _):
         response = rumps.alert(
             title=f"Update to v{self._update_version}",
-            message="Dictate will download the update and restart. Continue?",
-            ok="Update", cancel="Cancel"
+            message="Dictate will download the latest version and restart.",
+            ok="Update", cancel="Later"
         )
         if response != 1:
             return
@@ -263,21 +278,19 @@ class DictateApp(rumps.App):
             files_to_update = ["server.py", "overlay.py", "settings_window.py", "app.py", "make_icons.py"]
             for fname in files_to_update:
                 url  = f"{GITHUB_RAW}/{fname}"
-                dest = os.path.join(APP_RESOURCES, fname)
+                dest = os.path.join(APP_DATA_DIR, fname)  # write to ~/.dictate — no sudo needed
                 data = urllib.request.urlopen(url, timeout=15).read()
                 with open(dest, "wb") as f:
                     f.write(data)
-                print(f"✅ Updated {fname}")
-                src = os.path.join(APP_RESOURCES, fname)
-                dst = os.path.join(APP_DATA_DIR, fname)
-                if os.path.abspath(src) != os.path.abspath(dst):
-                    shutil.copy2(src, dst)
+            # Regenerate animation icons
+            subprocess.run([VENV_PYTHON, os.path.join(APP_DATA_DIR, "make_icons.py")],
+                           cwd=APP_DATA_DIR, capture_output=True)
             if self._server_proc:  self._server_proc.terminate()
             if self._ollama_proc:  self._ollama_proc.terminate()
             subprocess.Popen(["open", "/Applications/Dictate.app"])
             rumps.quit_application()
         except Exception as e:
-            rumps.alert("Update Failed", f"Could not download update:\n{e}")
+            rumps.alert("Update Failed", f"Could not download update. Check your internet connection and try again.")
 
     # ── CONTROLS ──────────────────────────────────────────────────────────────
 
@@ -285,7 +298,7 @@ class DictateApp(rumps.App):
         self._open_settings_window()
 
     def _open_settings_window(self):
-        subprocess.Popen([VENV_PYTHON, SETTINGS_PATH])
+        subprocess.Popen([VENV_PYTHON, _runtime_path("settings_window.py")])
 
     def toggle_dictation(self, _):
         try:
