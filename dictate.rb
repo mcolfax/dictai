@@ -1,6 +1,6 @@
 cask "dictate" do
-  version "1.4.3"
-  sha256 :no_check  # Replace with output of: shasum -a 256 Dictate.dmg
+  version "1.4.6"
+  sha256 "c08da2a82b5ce6246afcc4abaaa47ffb49a4355d3d504eb5cd18f610497826f1"
 
   url "https://github.com/mcolfax/dictate/releases/download/v#{version}/Dictate.dmg"
   name "Dictate"
