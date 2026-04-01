@@ -15,15 +15,26 @@ No cloud. No subscriptions. No API keys. Everything runs on your Mac.
 
 ## Install
 
+### Option A — Homebrew (recommended)
+
+```bash
+brew tap mcolfax/dictate
+brew install --cask dictate
+```
+
+Then open **Dictate.app** from your Applications folder.
+
+### Option B — Manual DMG
+
 1. Download **Dictate.dmg** from the [latest release](https://github.com/mcolfax/dictate/releases/latest)
 2. Open the DMG and drag **Dictate.app** to your Applications folder
-3. Open **Dictate.app** from Applications  
-   ⚠️ **Important:** Right-click → Open (do NOT double-click the first time)  
-   If you see "damaged or incomplete", run this in Terminal:  
-   `xattr -cr /Applications/Dictate.app`  
+3. Open **Dictate.app** from Applications
+   ⚠️ **Important:** Right-click → Open (do NOT double-click the first time)
+   If you see "damaged or incomplete", run this in Terminal:
+   `xattr -cr /Applications/Dictate.app`
    Then try opening again.
-4. The app will automatically install all dependencies in the background — watch the menu bar for progress
-5. Once setup is complete, a notification will appear and the UI will open
+
+The app will automatically install all dependencies on first launch — watch the menu bar for progress. Once setup is complete, a notification will appear.
 
 **Total setup time: ~5 minutes** depending on internet speed.
 
@@ -38,8 +49,8 @@ Done — opens normally from now on
 macOS will prompt for two permissions — both are required:
 
 - **Microphone** — for voice capture
-- **Accessibility** — for hotkey detection and text injection  
-  *(System Settings → Privacy & Security → Accessibility → enable dict.ai)*
+- **Accessibility** — for hotkey detection and text injection
+  *(System Settings → Privacy & Security → Accessibility → enable Dictate)*
 
 ---
 
@@ -49,7 +60,7 @@ macOS will prompt for two permissions — both are required:
 |--------|---------|
 | Start recording | Press **Right Option (⌥)** — configurable |
 | Stop recording | Press **Right Option (⌥)** again |
-| Open settings | http://localhost:5001 |
+| Open settings | Click **Open Dictate UI** in the menu bar (or http://localhost:5001) |
 
 Text is automatically transcribed, cleaned up by AI, and pasted into whatever app you're using.
 
@@ -110,6 +121,12 @@ Dictate checks for updates automatically. When a new version is available you'll
 
 You can also check manually from the settings UI (bottom of the page).
 
+If you installed via Homebrew:
+
+```bash
+brew upgrade --cask dictate
+```
+
 ---
 
 ## Troubleshooting
@@ -119,7 +136,7 @@ You can also check manually from the settings UI (bottom of the page).
 
 **Mic not picking up audio?**  
 → Use the Mic Test in the settings UI  
-→ System Settings → Privacy & Security → Microphone → enable dict.ai
+→ System Settings → Privacy & Security → Microphone → enable Dictate
 
 **UI not loading?**  
 → Make sure Dictate.app is running (check menu bar for waveform icon)  
