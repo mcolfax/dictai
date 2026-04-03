@@ -29,6 +29,33 @@ UPDATE_URL      = f"{GITHUB_RAW}/update.sh"
 
 import rumps
 
+# Patch rumps' internal NSApp delegate to handle dock icon clicks.
+# rumps sets its own NSApp (NSObject subclass) as NSApplication's delegate,
+# so methods on DictateApp are never called by AppKit directly.
+def _patch_rumps_reopen():
+    try:
+        import objc, signal as _sig
+        from rumps import rumps as _rumps_mod
+
+        def applicationShouldHandleReopen_hasVisibleWindows_(self, app, hasWindows):
+            lock = "/tmp/dictate_settings.lock"
+            try:
+                pid = int(open(lock).read().strip())
+                os.kill(pid, 0)           # verify process exists
+                os.kill(pid, _sig.SIGUSR1)  # raise existing window
+            except Exception:
+                subprocess.Popen([VENV_PYTHON, _runtime_path("settings_window.py")])
+            return True
+
+        objc.classAddMethods(
+            _rumps_mod.NSApp,
+            [applicationShouldHandleReopen_hasVisibleWindows_]
+        )
+    except Exception as e:
+        print(f"Could not patch rumps delegate: {e}")
+
+_patch_rumps_reopen()
+
 def is_setup_complete():
     """Check if all dependencies are installed."""
     return (
