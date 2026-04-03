@@ -329,8 +329,26 @@ class DictateApp(rumps.App):
             print(f"Toggle error: {e}")
 
     def quit_app(self, _):
-        if self._server_proc:  self._server_proc.terminate()
-        if self._ollama_proc:  self._ollama_proc.terminate()
+        # Kill server and any subprocesses it spawned
+        if self._server_proc:
+            try: self._server_proc.terminate()
+            except Exception: pass
+        if self._ollama_proc:
+            try: self._ollama_proc.terminate()
+            except Exception: pass
+        # Kill settings window and overlay processes
+        import subprocess as _sp, signal as _sig
+        for name in ("settings_window.py", "overlay.py"):
+            try:
+                r = _sp.run(["pgrep", "-f", name], capture_output=True, text=True)
+                for pid in r.stdout.strip().splitlines():
+                    try: os.kill(int(pid), _sig.SIGTERM)
+                    except Exception: pass
+            except Exception:
+                pass
+        # Remove stale lock file
+        try: os.unlink("/tmp/dictate_settings.lock")
+        except Exception: pass
         rumps.quit_application()
 
 if __name__ == "__main__":

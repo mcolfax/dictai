@@ -783,6 +783,11 @@ def api_mic_start():
 def api_mic_stop():
     stop_mic_test(); return jsonify({"mic_testing": False})
 
+@app.route("/api/mic/reset", methods=["POST"])
+def api_mic_reset():
+    _close_stream()
+    return jsonify({"ok": True})
+
 @app.route("/api/mic/devices", methods=["GET"])
 def api_mic_devices():
     try:
@@ -1236,12 +1241,9 @@ HTML = r"""<!DOCTYPE html>
 
     <div class="section-label">Microphone</div>
     <div class="settings-grid" style="margin-bottom:16px">
-      <div class="setting-item">
-        <div class="setting-info">
-          <div class="setting-name">Input Device</div>
-          <div class="setting-desc">Microphone used for recording</div>
-        </div>
-        <select class="select-input" id="micDeviceSelect" onchange="saveMicDevice()">
+      <div class="field">
+        <div class="field-label">Input Device</div>
+        <select id="micDeviceSelect" onchange="saveMicDevice()">
           <option value="">System Default</option>
         </select>
       </div>
@@ -1635,9 +1637,14 @@ async function loadMicDevices() {
   const sel = document.getElementById('micDeviceSelect');
   const current = config.mic_device || '';
   try {
-    const devices = await (await fetch('/api/mic/devices')).json();
+    const resp = await fetch('/api/mic/devices');
+    const devices = await resp.json();
+    if (!Array.isArray(devices) || devices.length === 0) return;
     sel.innerHTML = '<option value="">System Default</option>' +
-      devices.map(d => `<option value="${d.name}" ${d.name === current ? 'selected' : ''}>${d.name}${d.default ? ' (system default)' : ''}</option>`).join('');
+      devices.map(d =>
+        `<option value="${escHtml(d.name)}" ${d.name === current ? 'selected' : ''}>` +
+        `${escHtml(d.name)}${d.default ? ' ✓' : ''}</option>`
+      ).join('');
   } catch(e) { console.error('Could not load mic devices', e); }
 }
 
@@ -1645,6 +1652,8 @@ async function saveMicDevice() {
   const val = document.getElementById('micDeviceSelect').value;
   config.mic_device = val || null;
   await fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mic_device: config.mic_device})});
+  // Reset stream so next recording uses new device
+  await fetch('/api/mic/reset', {method:'POST'}).catch(() => {});
 }
 
 function toggleCleanup() { cleanupEnabled = document.getElementById('cleanupToggle').checked; updateCleanupUI(); autoSave(); }
