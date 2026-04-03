@@ -3,15 +3,13 @@
 settings_window.py — Native macOS settings window for Dictate.
 Hosts the existing Flask web UI in a WKWebView with a clean title-bar-integrated look.
 """
-import os, sys, urllib.request
+import os, sys, signal, urllib.request
 from AppKit import (NSApplication, NSBackingStoreBuffered,
     NSMakeRect, NSMakeSize, NSWindow, NSWindowCollectionBehaviorCanJoinAllSpaces,
     NSVisualEffectView, NSClosableWindowMask, NSTitledWindowMask,
-    NSMiniaturizableWindowMask, NSResizableWindowMask,
-    NSRunningApplication, NSApplicationActivateIgnoringOtherApps)
+    NSMiniaturizableWindowMask, NSResizableWindowMask)
 from Foundation import NSObject, NSURL, NSURLRequest, NSTimer
 from WebKit import WKWebView, WKWebViewConfiguration
-from objc import python_method
 
 SERVER_URL  = "http://127.0.0.1:5001"
 LOCK_FILE   = "/tmp/dictate_settings.lock"
@@ -19,10 +17,10 @@ MIN_WIDTH   = 520
 MIN_HEIGHT  = 560
 
 def _already_running():
-    """Return True if another settings window process is already open."""
+    """Return the PID of a running settings window process, or None."""
     try:
         pid = int(open(LOCK_FILE).read().strip())
-        os.kill(pid, 0)  # raises if process doesn't exist
+        os.kill(pid, 0)  # raises OSError if process doesn't exist
         return pid
     except Exception:
         return None
@@ -52,13 +50,13 @@ class SettingsDelegate(NSObject):
 
         # Vibrancy background
         vfx = NSVisualEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
-        vfx.setMaterial_(2)   # sidebar — frosty/light frosted look
+        vfx.setMaterial_(2)
         vfx.setBlendingMode_(0)
         vfx.setState_(1)
         vfx.setAutoresizingMask_(18)
         self._win.setContentView_(vfx)
 
-        # WKWebView fills the whole window including under titlebar
+        # WKWebView
         cfg = WKWebViewConfiguration.alloc().init()
         self._wv = WKWebView.alloc().initWithFrame_configuration_(
             NSMakeRect(0, 0, w, h), cfg)
@@ -67,9 +65,26 @@ class SettingsDelegate(NSObject):
         self._wv.setNavigationDelegate_(self)
         vfx.addSubview_(self._wv)
 
+        # Install SIGUSR1 handler — signals the running process to raise itself.
+        # Signal handlers run on Python's main thread; AppKit calls are safe here
+        # because we dispatch them via a one-shot NSTimer onto the run loop.
+        self._raise_requested = False
+        signal.signal(signal.SIGUSR1, self._on_raise_signal)
+        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            0.1, self, "checkRaiseFlag:", None, True)
+
         self._load_attempts = 0
         NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             0.3, self, "tryLoad:", None, True)
+
+    def _on_raise_signal(self, signum, frame):
+        self._raise_requested = True
+
+    def checkRaiseFlag_(self, timer):
+        if self._raise_requested:
+            self._raise_requested = False
+            self._win.makeKeyAndOrderFront_(None)
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
 
     def tryLoad_(self, timer):
         try:
@@ -82,7 +97,7 @@ class SettingsDelegate(NSObject):
             NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         except Exception:
             self._load_attempts += 1
-            if self._load_attempts > 50:  # 15 seconds — server not up, give up
+            if self._load_attempts > 50:  # 15 s — server not up, give up
                 timer.invalidate()
                 _clear_lock()
                 NSApplication.sharedApplication().terminate_(None)
@@ -92,13 +107,10 @@ class SettingsDelegate(NSObject):
         (function(){
           var s = document.createElement('style');
           s.textContent = [
-            /* fluid padding, no fixed max-width cap */
             '.app { padding: 16px clamp(16px, 3vw, 40px) 24px !important;',
             '       max-width: 100% !important; }',
-            /* settings grid: 1 col on narrow, 2 on medium, 3+ on wide */
             '.settings-grid { grid-template-columns:',
             '  repeat(auto-fit, minmax(260px, 1fr)) !important; }',
-            /* version footer stretches full width */
             '.version-footer { width: 100% !important; box-sizing: border-box; }',
           ].join(' ');
           document.head.appendChild(s);
@@ -107,7 +119,6 @@ class SettingsDelegate(NSObject):
         self._wv.evaluateJavaScript_completionHandler_(js, None)
 
     def applicationShouldHandleReopen_hasVisibleWindows_(self, app, hasWindows):
-        """Bring the window to front when the dock icon is clicked."""
         self._win.makeKeyAndOrderFront_(None)
         app.activateIgnoringOtherApps_(True)
         return True
@@ -120,22 +131,15 @@ class SettingsDelegate(NSObject):
         return True
 
 
-def _bring_existing_to_front(pid):
-    """Activate the existing settings window process by PID."""
-    try:
-        running = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
-        if running:
-            running.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
-            return True
-    except Exception:
-        pass
-    return False
-
-
 if __name__ == "__main__":
     existing_pid = _already_running()
     if existing_pid:
-        _bring_existing_to_front(existing_pid)
+        # Signal the running process to bring itself to front.
+        # Works even for accessory apps since the process raises itself.
+        try:
+            os.kill(existing_pid, signal.SIGUSR1)
+        except Exception:
+            pass
         sys.exit(0)
 
     _write_lock()
