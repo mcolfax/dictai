@@ -221,6 +221,8 @@ class DictateApp(rumps.App):
                 urllib.request.urlopen("http://127.0.0.1:5001", timeout=1)
                 self.template = True
                 self.icon = os.path.join(APP_RESOURCES, "icon_menubar.png")
+                # Auto-open settings on first run after server is ready
+                self._open_settings_window()
                 break
             except Exception:
                 time.sleep(0.5)

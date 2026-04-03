@@ -5,24 +5,27 @@ Hosts the existing Flask web UI in a WKWebView with a clean title-bar-integrated
 """
 import os, sys, urllib.request
 from AppKit import (NSApplication, NSBackingStoreBuffered,
-    NSMakeRect, NSWindow, NSWindowCollectionBehaviorCanJoinAllSpaces,
+    NSMakeRect, NSMakeSize, NSWindow, NSWindowCollectionBehaviorCanJoinAllSpaces,
     NSVisualEffectView, NSClosableWindowMask, NSTitledWindowMask,
-    NSMiniaturizableWindowMask, NSResizableWindowMask)
+    NSMiniaturizableWindowMask, NSResizableWindowMask,
+    NSRunningApplication, NSApplicationActivateIgnoringOtherApps)
 from Foundation import NSObject, NSURL, NSURLRequest, NSTimer
 from WebKit import WKWebView, WKWebViewConfiguration
 from objc import python_method
 
-SERVER_URL = "http://127.0.0.1:5001"
-LOCK_FILE  = "/tmp/dictate_settings.lock"
+SERVER_URL  = "http://127.0.0.1:5001"
+LOCK_FILE   = "/tmp/dictate_settings.lock"
+MIN_WIDTH   = 520
+MIN_HEIGHT  = 560
 
 def _already_running():
     """Return True if another settings window process is already open."""
     try:
         pid = int(open(LOCK_FILE).read().strip())
-        os.kill(pid, 0)  # Check if process exists
-        return True
+        os.kill(pid, 0)  # raises if process doesn't exist
+        return pid
     except Exception:
-        return False
+        return None
 
 def _write_lock():
     with open(LOCK_FILE, "w") as f:
@@ -45,6 +48,7 @@ class SettingsDelegate(NSObject):
         self._win.center()
         self._win.setDelegate_(self)
         self._win.setCollectionBehavior_(NSWindowCollectionBehaviorCanJoinAllSpaces)
+        self._win.setMinSize_(NSMakeSize(MIN_WIDTH, MIN_HEIGHT))
 
         # Vibrancy background
         vfx = NSVisualEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
@@ -102,6 +106,12 @@ class SettingsDelegate(NSObject):
         """
         self._wv.evaluateJavaScript_completionHandler_(js, None)
 
+    def applicationShouldHandleReopen_hasVisibleWindows_(self, app, hasWindows):
+        """Bring the window to front when the dock icon is clicked."""
+        self._win.makeKeyAndOrderFront_(None)
+        app.activateIgnoringOtherApps_(True)
+        return True
+
     def windowWillClose_(self, notification):
         _clear_lock()
         NSApplication.sharedApplication().terminate_(None)
@@ -110,13 +120,22 @@ class SettingsDelegate(NSObject):
         return True
 
 
+def _bring_existing_to_front(pid):
+    """Activate the existing settings window process by PID."""
+    try:
+        running = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+        if running:
+            running.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+            return True
+    except Exception:
+        pass
+    return False
+
+
 if __name__ == "__main__":
-    if _already_running():
-        # Bring existing window to front via AppleScript
-        import subprocess
-        subprocess.run(["osascript", "-e",
-            'tell application "System Events" to set frontmost of every process whose name is "Python" to true'],
-            capture_output=True)
+    existing_pid = _already_running()
+    if existing_pid:
+        _bring_existing_to_front(existing_pid)
         sys.exit(0)
 
     _write_lock()

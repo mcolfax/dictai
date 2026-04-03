@@ -1582,6 +1582,9 @@ function applyStatus(data) {
     if (!config.onboarding_done) {
       setTimeout(() => showOnboarding(), 500);
     }
+
+    // Load mic devices now that config is available
+    loadMicDevices();
   }
 
   // History
@@ -1635,11 +1638,11 @@ async function toggleMicTest() {
 
 async function loadMicDevices() {
   const sel = document.getElementById('micDeviceSelect');
-  const current = config.mic_device || '';
   try {
     const resp = await fetch('/api/mic/devices');
     const devices = await resp.json();
     if (!Array.isArray(devices) || devices.length === 0) return;
+    const current = currentConfig.mic_device || '';
     sel.innerHTML = '<option value="">System Default</option>' +
       devices.map(d =>
         `<option value="${escHtml(d.name)}" ${d.name === current ? 'selected' : ''}>` +
@@ -1764,7 +1767,6 @@ fetch('/api/version').then(r=>r.json()).then(d => {
   document.getElementById('versionFooter').textContent = 'v' + d.current;
 });
 fetchStatus();
-loadMicDevices();
 setInterval(fetchStatus, 1000);
 </script>
 </body>
