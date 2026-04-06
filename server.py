@@ -240,6 +240,26 @@ def hide_overlay_display():
     state["overlay_text"] = ""
     _send_overlay("")
 
+_last_level_send = 0.0
+
+def notify_overlay_level(level: float):
+    """Send audio level (0.0–1.0) to overlay for waveform animation. Throttled to ~15/s."""
+    global _last_level_send
+    now = time.monotonic()
+    if now - _last_level_send < 0.067:
+        return
+    _last_level_send = now
+    if not config.get("overlay_enabled", True):
+        return
+    try:
+        conn = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        conn.settimeout(0.1)
+        conn.connect(OVERLAY_SOCKET)
+        conn.sendall(json.dumps({"level": round(float(level), 3)}).encode("utf-8"))
+        conn.close()
+    except Exception:
+        pass
+
 # ── FRONTMOST APP ─────────────────────────────────────────────────────────────
 
 def get_frontmost_app():
@@ -395,8 +415,10 @@ def _record_worker():
             all_frames.append(chunk.copy())
             state["_recorded_frames"] = all_frames  # Keep updated for partial thread
 
+            rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
+            notify_overlay_level(min(1.0, rms / 8000.0))
+
             if config.get("pause_detection", True) and config.get("mode") not in ("toggle", "hold"):
-                rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
                 if rms > 200:
                     _last_sound_time = time.time()
                 elif time.time() - _last_sound_time >= float(config.get("pause_seconds", 2.0)):
@@ -866,6 +888,18 @@ def api_version():
     return jsonify({"current": APP_VERSION, "latest": latest,
                     "update_available": bool(latest and latest != APP_VERSION)})
 
+@app.route("/api/open_settings", methods=["POST"])
+def api_open_settings():
+    """Signal app.py to open the settings window."""
+    settings_py = os.path.join(_DATA_DIR, "settings_window.py")
+    if not os.path.exists(settings_py):
+        settings_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings_window.py")
+    venv_py = os.path.join(_DATA_DIR, "venv", "bin", "python3")
+    if not os.path.exists(venv_py):
+        venv_py = sys.executable
+    subprocess.Popen(["arch", "-arm64", venv_py, settings_py])
+    return jsonify({"ok": True})
+
 @app.route("/api/onboarding/complete", methods=["POST"])
 def api_onboarding_complete():
     config["onboarding_done"] = True; save_config(config)
@@ -917,8 +951,117 @@ def api_errors_clear():
     except Exception: pass
     return jsonify({"ok": True})
 
+@app.route("/popover")
+def popover():
+    return POPOVER_HTML
+
 @app.route("/")
 def index(): return HTML
+
+# ── POPOVER HTML ─────────────────────────────────────────────────────────────
+
+POPOVER_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  :root{--bg:transparent;--surface:#1c1c1e;--border:rgba(255,255,255,.10);--text:#f0f0f0;--dim:#888;--amber:#f59e0b}
+  @media(prefers-color-scheme:light){:root{--surface:#f5f5f7;--border:rgba(0,0,0,.10);--text:#1a1a1a;--dim:#666}}
+  body{font-family:-apple-system,sans-serif;font-size:13px;color:var(--text);background:transparent;padding:12px;-webkit-font-smoothing:antialiased;user-select:none}
+  .row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .row:last-child{margin-bottom:0}
+  .label{color:var(--dim);font-size:11px;letter-spacing:.04em;flex:1}
+  .val{font-weight:500;color:var(--text)}
+  .toggle-wrap{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);border-radius:10px;margin-bottom:10px;border:1px solid var(--border)}
+  .toggle-label{flex:1;font-size:13px;font-weight:500}
+  .toggle{position:relative;width:36px;height:22px;flex-shrink:0}
+  .toggle input{opacity:0;width:0;height:0}
+  .slider{position:absolute;inset:0;border-radius:11px;background:#555;transition:.2s;cursor:pointer}
+  .slider:before{content:"";position:absolute;width:18px;height:18px;left:2px;bottom:2px;background:#fff;border-radius:50%;transition:.2s}
+  input:checked+.slider{background:var(--amber)}
+  input:checked+.slider:before{transform:translateX(14px)}
+  .last-text{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-bottom:10px;font-size:12px;color:var(--dim);min-height:36px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .last-text .snippet{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+  .last-text .snippet.empty{color:var(--dim);font-style:italic}
+  .copy-btn{background:none;border:none;color:var(--dim);cursor:pointer;font-size:11px;padding:2px 6px;border-radius:5px;flex-shrink:0}
+  .copy-btn:hover{background:rgba(128,128,128,.15);color:var(--text)}
+  .stats{display:flex;gap:6px;margin-bottom:10px}
+  .stat{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:6px 8px;text-align:center}
+  .stat .n{font-size:16px;font-weight:600;color:var(--amber)}
+  .stat .s{font-size:10px;color:var(--dim);margin-top:1px}
+  .open-btn{width:100%;padding:9px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.25);border-radius:10px;color:var(--amber);font-size:13px;font-weight:500;cursor:pointer;transition:all .15s}
+  .open-btn:hover{background:rgba(245,158,11,.2)}
+  .recording-dot{width:7px;height:7px;border-radius:50%;background:#ef4444;display:inline-block;animation:blink 1s ease-in-out infinite;margin-right:5px}
+  @keyframes blink{0%,100%{opacity:.3}50%{opacity:1}}
+</style>
+</head>
+<body>
+<div class="toggle-wrap">
+  <span id="statusDot"></span>
+  <span class="toggle-label" id="toggleLabel">Dictation</span>
+  <label class="toggle">
+    <input type="checkbox" id="enableToggle" onchange="toggleEnabled()">
+    <span class="slider"></span>
+  </label>
+</div>
+<div class="last-text">
+  <span class="snippet" id="lastSnippet"><span class="empty">No transcriptions yet</span></span>
+  <button class="copy-btn" onclick="copyLast()" title="Copy">⌘C</button>
+</div>
+<div class="stats">
+  <div class="stat"><div class="n" id="popWords">0</div><div class="s">words today</div></div>
+  <div class="stat"><div class="n" id="popSessions">0</div><div class="s">sessions</div></div>
+</div>
+<button class="open-btn" onclick="openSettings()">Open Dictate Settings →</button>
+<script>
+let _lastText = '';
+async function refresh() {
+  try {
+    const d = await (await fetch('http://127.0.0.1:5001/api/status')).json();
+    const en = d.enabled;
+    document.getElementById('enableToggle').checked = en;
+    const lbl = document.getElementById('toggleLabel');
+    const dot = document.getElementById('statusDot');
+    if (d.recording) {
+      dot.innerHTML = '<span class="recording-dot"></span>';
+      lbl.textContent = 'Recording…';
+    } else {
+      dot.innerHTML = '';
+      lbl.textContent = en ? 'Enabled' : 'Disabled';
+    }
+    const h = d.history;
+    const snip = document.getElementById('lastSnippet');
+    if (h && h.length) {
+      _lastText = h[0].cleaned || h[0].text || '';
+      const short = _lastText.length > 60 ? _lastText.slice(0, 60) + '…' : _lastText;
+      snip.innerHTML = escHtml(short);
+    }
+    if (d.stats) {
+      document.getElementById('popWords').textContent = d.stats.words_today || 0;
+      document.getElementById('popSessions').textContent = d.stats.sessions_today || 0;
+    }
+  } catch(e) {}
+}
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+async function toggleEnabled() {
+  const en = document.getElementById('enableToggle').checked;
+  await fetch('http://127.0.0.1:5001/api/toggle', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({enabled:en})});
+  refresh();
+}
+function copyLast() {
+  if (_lastText) navigator.clipboard.writeText(_lastText).catch(()=>{});
+}
+async function openSettings() {
+  await fetch('http://127.0.0.1:5001/api/open_settings', {method:'POST'});
+  window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.closePopover && window.webkit.messageHandlers.closePopover.postMessage('close');
+}
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>"""
 
 # ── HTML UI ───────────────────────────────────────────────────────────────────
 
@@ -945,10 +1088,10 @@ HTML = r"""<!DOCTYPE html>
   }
 
   html,body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-size:13px;min-height:100vh;line-height:1.5;transition:background .2s,color .2s}
-  .app{max-width:820px;margin:0 auto;padding:48px 24px 80px}
+  .app{max-width:100%;padding:0}
 
   /* ── Header ── */
-  .header{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:48px;padding-bottom:24px;border-bottom:1px solid var(--border)}
+  .header{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:0;padding-bottom:0;border-bottom:none}
   .wordmark{font-family:'Syne',sans-serif;font-size:28px;font-weight:800;letter-spacing:-0.5px}
   .wordmark span{color:var(--amber)}
   .header-right{display:flex;align-items:center;gap:12px}
@@ -982,9 +1125,16 @@ HTML = r"""<!DOCTYPE html>
   .stat-label{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
 
   /* ── Tabs ── */
-  .tabs{display:flex;gap:2px;margin-bottom:24px;border-bottom:1px solid var(--border)}
-  .tab{padding:10px 18px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);cursor:pointer;border:none;background:none;font-family:'JetBrains Mono',monospace;border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .15s}
-  .tab:hover{color:var(--text)}.tab.active{color:var(--amber);border-bottom-color:var(--amber)}
+  .app-shell{display:flex;flex-direction:column;min-height:100vh}
+  .app-header{display:flex;align-items:flex-end;justify-content:space-between;padding:20px 24px 16px;border-bottom:1px solid var(--border);flex-shrink:0}
+  .app-body{display:flex;flex:1;overflow:hidden;min-height:0}
+  .sidebar{width:160px;flex-shrink:0;border-right:1px solid var(--border);padding:12px 8px;display:flex;flex-direction:column;gap:2px;overflow-y:auto}
+  .nav-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;border:none;background:transparent;color:var(--dim);cursor:pointer;font-family:-apple-system,sans-serif;font-size:13px;text-align:left;width:100%;transition:all .15s}
+  .nav-item:hover{background:var(--surface);color:var(--text)}
+  .nav-item.active{background:rgba(245,158,11,.1);color:var(--amber)}
+  .nav-item svg{flex-shrink:0;opacity:.7}
+  .nav-item.active svg{opacity:1}
+  .content{flex:1;overflow-y:auto;padding:24px}
   .tab-panel{display:none}.tab-panel.active{display:block}
 
   /* ── Fields ── */
@@ -1091,7 +1241,7 @@ HTML = r"""<!DOCTYPE html>
   .modal-step{display:none}.modal-step.active{display:block}
   .modal-title{font-family:'Syne',sans-serif;font-size:24px;font-weight:800;margin-bottom:8px}
   .modal-subtitle{color:var(--dim);font-size:13px;margin-bottom:32px;line-height:1.6}
-  .modal-icon{font-size:48px;margin-bottom:20px;text-align:center}
+  .modal-icon{font-size:48px;margin-bottom:20px;text-align:center;display:flex;align-items:center;justify-content:center}
   .step-indicators{display:flex;gap:6px;justify-content:center;margin-bottom:28px}
   .step-dot{width:8px;height:8px;border-radius:50%;background:var(--muted);transition:all .2s}
   .step-dot.active{background:var(--amber);transform:scale(1.2)}
@@ -1124,7 +1274,18 @@ HTML = r"""<!DOCTYPE html>
 
     <!-- Step 1: Welcome -->
     <div class="modal-step active" id="step0">
-      <div class="modal-icon">🎤</div>
+      <div class="modal-icon">
+        <svg width="72" height="72" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg">
+          <rect x="28" y="8" width="24" height="36" rx="12" fill="#f59e0b"/>
+          <path d="M18 38 Q18 60 40 60 Q62 60 62 38" stroke="#f59e0b" stroke-width="3" fill="none" stroke-linecap="round"/>
+          <line x1="40" y1="60" x2="40" y2="70" stroke="#f59e0b" stroke-width="3" stroke-linecap="round"/>
+          <line x1="28" y1="70" x2="52" y2="70" stroke="#f59e0b" stroke-width="3" stroke-linecap="round"/>
+          <path d="M14 26 Q9 37 14 48" stroke="#f59e0b" stroke-width="2.5" fill="none" stroke-linecap="round" opacity="0.7"><animate attributeName="opacity" values="0.7;0.2;0.7" dur="1.4s" repeatCount="indefinite"/></path>
+          <path d="M6 20 Q-1 37 6 54" stroke="#f59e0b" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.4"><animate attributeName="opacity" values="0.4;0.1;0.4" dur="1.4s" begin="0.25s" repeatCount="indefinite"/></path>
+          <path d="M66 26 Q71 37 66 48" stroke="#f59e0b" stroke-width="2.5" fill="none" stroke-linecap="round" opacity="0.7"><animate attributeName="opacity" values="0.7;0.2;0.7" dur="1.4s" repeatCount="indefinite"/></path>
+          <path d="M74 20 Q81 37 74 54" stroke="#f59e0b" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.4"><animate attributeName="opacity" values="0.4;0.1;0.4" dur="1.4s" begin="0.25s" repeatCount="indefinite"/></path>
+        </svg>
+      </div>
       <div class="modal-title">Welcome to Dictate</div>
       <div class="modal-subtitle">System-wide AI dictation for your Mac. Let's get you set up in 3 quick steps.</div>
       <button class="modal-btn" onclick="nextStep()">Get Started →</button>
@@ -1133,7 +1294,18 @@ HTML = r"""<!DOCTYPE html>
 
     <!-- Step 2: Hotkey -->
     <div class="modal-step" id="step1">
-      <div class="modal-icon">⌨️</div>
+      <div class="modal-icon">
+        <svg width="72" height="72" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg">
+          <rect x="6" y="22" width="68" height="38" rx="7" fill="none" stroke="#f59e0b" stroke-width="2.5"/>
+          <rect x="14" y="30" width="11" height="9" rx="2.5" fill="#f59e0b" opacity="0.9"><animate attributeName="opacity" values="0.9;0.3;0.9" dur="0.9s" repeatCount="indefinite"/></rect>
+          <rect x="29" y="30" width="11" height="9" rx="2.5" fill="#f59e0b" opacity="0.45"/>
+          <rect x="44" y="30" width="11" height="9" rx="2.5" fill="#f59e0b" opacity="0.45"/>
+          <rect x="59" y="30" width="11" height="9" rx="2.5" fill="#f59e0b" opacity="0.45"/>
+          <rect x="14" y="43" width="8" height="9" rx="2.5" fill="#f59e0b" opacity="0.35"/>
+          <rect x="26" y="43" width="28" height="9" rx="2.5" fill="#f59e0b" opacity="0.35"/>
+          <rect x="58" y="43" width="12" height="9" rx="2.5" fill="#f59e0b" opacity="0.35"/>
+        </svg>
+      </div>
       <div class="modal-title">Set Your Hotkey</div>
       <div class="modal-subtitle">Press the key you want to use to start/stop recording. You can change this anytime in Settings.</div>
       <div class="hotkey-field" id="onboardHotkeyField" style="margin-bottom:16px">
@@ -1148,7 +1320,12 @@ HTML = r"""<!DOCTYPE html>
 
     <!-- Step 3: Permissions + mic test -->
     <div class="modal-step" id="step2">
-      <div class="modal-icon">🔐</div>
+      <div class="modal-icon">
+        <svg width="72" height="72" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg">
+          <path d="M40 6 L66 17 L66 40 Q66 60 40 74 Q14 60 14 40 L14 17 Z" fill="none" stroke="#f59e0b" stroke-width="2.5" stroke-linejoin="round"/>
+          <path d="M26 40 L35 50 L54 30" stroke="#f59e0b" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="40" stroke-dashoffset="40"><animate attributeName="stroke-dashoffset" from="40" to="0" dur="0.7s" begin="0.3s" fill="freeze"/></path>
+        </svg>
+      </div>
       <div class="modal-title">Grant Permissions</div>
       <div class="modal-subtitle">Dictate needs two permissions to work. Both can be found in <strong>System Settings → Privacy & Security</strong>.</div>
       <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px">
@@ -1174,14 +1351,50 @@ HTML = r"""<!DOCTYPE html>
   </div>
 </div>
 
-<div class="app">
-  <div class="header">
+<div class="app app-shell">
+  <div class="app-header header">
     <div class="wordmark">dict<span>.</span>ate</div>
     <div class="header-right">
       <span class="version-badge" id="versionBadge">loading...</span>
       <button class="theme-toggle" onclick="cycleTheme()" id="themeBtn">🌙</button>
     </div>
-  </div>
+  </div><!-- end header -->
+
+  <div class="app-body">
+  <aside class="sidebar">
+    <button class="nav-item active" data-tab="home" onclick="showTab('home')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      Home
+    </button>
+    <button class="nav-item" data-tab="history" onclick="showTab('history')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      History
+    </button>
+    <button class="nav-item" data-tab="general" onclick="showTab('general')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M19.07 4.93L4.93 19.07"/></svg>
+      General
+    </button>
+    <button class="nav-item" data-tab="language" onclick="showTab('language')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+      Language
+    </button>
+    <button class="nav-item" data-tab="overlay" onclick="showTab('overlay')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+      Overlay
+    </button>
+    <button class="nav-item" data-tab="vocab" onclick="showTab('vocab')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      Vocabulary
+    </button>
+    <button class="nav-item" data-tab="apptones" onclick="showTab('apptones')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+      App Tones
+    </button>
+  </aside>
+  <main class="content">
+
+  <!-- Home panel: power + stats -->
+  <div class="tab-panel active" id="tab-home">
 
   <!-- Power -->
   <div class="power-section">
@@ -1208,17 +1421,9 @@ HTML = r"""<!DOCTYPE html>
     <div class="stat-card"><div class="stat-value" id="statSessionsTotal">0</div><div class="stat-label">Sessions Total</div></div>
   </div>
 
-  <!-- Tabs -->
-  <div class="tabs">
-    <button class="tab active" onclick="showTab('general')">General</button>
-    <button class="tab" onclick="showTab('language')">Language</button>
-    <button class="tab" onclick="showTab('overlay')">Overlay</button>
-    <button class="tab" onclick="showTab('vocab')">Vocabulary</button>
-    <button class="tab" onclick="showTab('apptones')">App Tones</button>
-  </div>
+  </div><!-- end tab-home -->
 
-  <!-- General tab -->
-  <div class="tab-panel active" id="tab-general">
+  <div class="tab-panel" id="tab-general">
     <div class="settings-grid">
       <div class="field">
         <div class="field-label">Trigger Mode</div>
@@ -1418,19 +1623,7 @@ HTML = r"""<!DOCTYPE html>
     <button class="save-btn" id="appToneSaveBtn" onclick="saveAppTones()">Save App Tones</button>
   </div>
 
-  <div class="divider"></div>
-
-  <!-- Version footer -->
-  <div class="version-footer">
-    <div style="font-size:11px;color:var(--dim)">dict<span style="color:var(--amber)">.</span>ate &nbsp;·&nbsp; <span id="versionFooter">loading...</span></div>
-    <button onclick="checkForUpdates()" id="updateBtn" style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);background:var(--muted);border:none;border-radius:3px;padding:4px 12px;cursor:pointer;font-family:'JetBrains Mono',monospace;transition:all .15s;">Check for Updates</button>
-  </div>
-  <div id="updateBanner" class="update-banner">
-    <span id="updateMsg" style="font-size:12px;"></span>
-    <a id="updateLink" href="https://github.com/mcolfax/dictate/releases" target="_blank" style="color:var(--amber);text-decoration:none;font-size:10px;letter-spacing:.1em;text-transform:uppercase;white-space:nowrap;">View Release →</a>
-  </div>
-
-  <!-- History -->
+  <div class="tab-panel" id="tab-history">
   <div class="history-header">
     <div class="section-label" style="margin:0">Recent Transcriptions</div>
     <button class="clear-btn" onclick="clearHistory()">Clear</button>
@@ -1438,6 +1631,17 @@ HTML = r"""<!DOCTYPE html>
   <input class="history-search" id="historySearch" placeholder="Search transcriptions…" oninput="filterHistory()" />
   <div class="history-list" id="historyList">
     <div class="empty-state">No transcriptions yet</div>
+  </div>
+  </div><!-- end tab-history -->
+  </main><!-- end content -->
+  </div><!-- end app-body -->
+<div class="version-footer">
+    <div style="font-size:11px;color:var(--dim)">dict<span style="color:var(--amber)">.</span>ate &nbsp;·&nbsp; <span id="versionFooter">loading...</span></div>
+    <button onclick="checkForUpdates()" id="updateBtn" style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);background:var(--muted);border:none;border-radius:3px;padding:4px 12px;cursor:pointer;font-family:'JetBrains Mono',monospace;transition:all .15s;">Check for Updates</button>
+  </div>
+  <div id="updateBanner" class="update-banner">
+    <span id="updateMsg" style="font-size:12px;"></span>
+    <a id="updateLink" href="https://github.com/mcolfax/dictate/releases" target="_blank" style="color:var(--amber);text-decoration:none;font-size:10px;letter-spacing:.1em;text-transform:uppercase;white-space:nowrap;">View Release →</a>
   </div>
 </div>
 
@@ -1741,11 +1945,12 @@ function filterHistory() {
 }
 
 function showTab(name) {
-  document.querySelectorAll('.tab').forEach((t,i) => {
-    const panels = ['general','language','overlay','vocab','apptones'];
-    t.classList.toggle('active', panels[i] === name);
+  document.querySelectorAll('.nav-item').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === name);
   });
-  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
+  document.querySelectorAll('.tab-panel').forEach(p => {
+    p.classList.toggle('active', p.id === `tab-${name}`);
+  });
   if (name === 'vocab')     loadVocab();
   if (name === 'apptones')  loadAppTones();
 }

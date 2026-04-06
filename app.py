@@ -20,7 +20,7 @@ SETTINGS_PATH   = _runtime_path("settings_window.py")
 OLLAMA_BIN      = "/opt/homebrew/bin/ollama"
 BREW_BIN        = "/opt/homebrew/bin/brew"
 
-CURRENT_VERSION = "1.5.5"
+CURRENT_VERSION = "1.5.6"
 GITHUB_USER     = "mcolfax"
 GITHUB_REPO     = "dictate"
 GITHUB_RAW      = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main"
@@ -28,6 +28,67 @@ VERSION_URL     = f"{GITHUB_RAW}/version.txt"
 UPDATE_URL      = f"{GITHUB_RAW}/update.sh"
 
 import rumps
+from Foundation import NSObject
+
+# ── POPOVER CONTROLLER ────────────────────────────────────────────────────────
+
+class _PopoverController(NSObject):
+    """Manages a WKWebView-backed NSPopover triggered by the menu bar icon."""
+
+    def setup_withStatusItem_menu_url_(self, status_item, menu, url_str):
+        from AppKit import (NSPopover, NSViewController, NSView, NSMakeRect, NSMakeSize)
+        from WebKit import WKWebView, WKWebViewConfiguration
+        from Foundation import NSURL, NSURLRequest
+        import objc
+
+        self._status_item = status_item
+        self._menu = menu
+
+        # Intercept the status item's button — left click = popover, right = menu
+        status_item.setMenu_(None)
+        btn = status_item.button()
+        btn.setTarget_(self)
+        btn.setAction_(objc.selector(
+            self.popoverBtnClicked_,
+            selector=b'popoverBtnClicked:',
+            signature=b'v@:@'
+        ))
+        btn.sendActionOn_(2 | 8)  # NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown
+
+        # Build popover with WKWebView
+        self._popover = NSPopover.alloc().init()
+        self._popover.setBehavior_(1)  # NSPopoverBehaviorTransient — auto-close on outside click
+        w, h = 300, 252
+        vc = NSViewController.alloc().init()
+        frame = NSMakeRect(0, 0, w, h)
+        view = NSView.alloc().initWithFrame_(frame)
+        cfg = WKWebViewConfiguration.alloc().init()
+        self._wv = WKWebView.alloc().initWithFrame_configuration_(frame, cfg)
+        self._wv.setAutoresizingMask_(18)
+        view.addSubview_(self._wv)
+        vc.setView_(view)
+        self._popover.setContentSize_(NSMakeSize(w, h))
+        self._popover.setContentViewController_(vc)
+
+        url = NSURL.URLWithString_(url_str)
+        self._wv.loadRequest_(NSURLRequest.requestWithURL_(url))
+
+    def popoverBtnClicked_(self, sender):
+        from AppKit import NSApp
+        event = NSApp.currentEvent()
+        # type 3 = NSEventTypeRightMouseDown, flag 1<<18 = control key
+        is_right = event and (event.type() == 3 or (event.modifierFlags() & (1 << 18)))
+        if is_right:
+            self._status_item.popUpStatusItemMenu_(self._menu)
+        elif self._popover.isShown():
+            self._popover.close()
+        else:
+            btn = self._status_item.button()
+            # 1 = NSRectEdgeMinY — popover appears below the status bar button
+            self._popover.showRelativeToRect_ofView_preferredEdge_(
+                btn.bounds(), btn, 1)
+
+# ── PATCH RUMPS DELEGATE ──────────────────────────────────────────────────────
 
 # Patch rumps' internal NSApp delegate to handle dock icon clicks.
 # rumps sets its own NSApp (NSObject subclass) as NSApplication's delegate,
@@ -258,6 +319,7 @@ class DictateApp(rumps.App):
                 self.template = True
                 self.icon = os.path.join(APP_RESOURCES, "icon_menubar.png")
                 self._open_settings_window()
+                self._setup_popover()
                 break
             except Exception:
                 time.sleep(0.5)
@@ -420,6 +482,19 @@ class DictateApp(rumps.App):
 
     def open_ui(self, _):
         self._open_settings_window()
+
+    def _setup_popover(self):
+        """Hook into the rumps NSStatusItem to show a popover on left click."""
+        try:
+            from AppKit import NSApplication
+            nsapp = NSApplication.sharedApplication().delegate()
+            status_item = nsapp.nsstatusitem
+            menu = status_item.menu()
+            self._popover_ctrl = _PopoverController.alloc().init()
+            self._popover_ctrl.setup_withStatusItem_menu_url_(
+                status_item, menu, "http://127.0.0.1:5001/popover")
+        except Exception as e:
+            print(f"Popover setup error: {e}")
 
     def _open_settings_window(self):
         subprocess.Popen([VENV_PYTHON, _runtime_path("settings_window.py")])
