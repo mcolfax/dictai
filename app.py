@@ -20,7 +20,7 @@ SETTINGS_PATH   = _runtime_path("settings_window.py")
 OLLAMA_BIN      = "/opt/homebrew/bin/ollama"
 BREW_BIN        = "/opt/homebrew/bin/brew"
 
-CURRENT_VERSION = "1.5.6"
+CURRENT_VERSION = "1.5.8"
 GITHUB_USER     = "mcolfax"
 GITHUB_REPO     = "dictate"
 GITHUB_RAW      = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main"
@@ -393,6 +393,14 @@ class DictateApp(rumps.App):
                 latest = resp.read().decode().strip()
                 if self._version_newer(latest, CURRENT_VERSION):
                     self._update_version = latest
+                    # Fetch release notes from GitHub releases API
+                    try:
+                        api_url = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/releases/tags/v{latest}"
+                        req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github+json", "User-Agent": "Dictate-App"})
+                        rel = json.loads(urllib.request.urlopen(req, timeout=5).read())
+                        self._release_notes = rel.get("body", "")
+                    except Exception:
+                        self._release_notes = ""
                     rumps.notification(
                         "Dictate Update Available",
                         f"Version {latest} is ready",
@@ -411,13 +419,57 @@ class DictateApp(rumps.App):
         except Exception:
             return False
 
+    def _show_update_sheet(self):
+        """Show a Sparkle-style NSAlert with a scrollable release-notes accessory view."""
+        try:
+            from AppKit import (NSAlert, NSScrollView, NSTextView, NSMakeRect, NSColor,
+                                NSFont, NSBezelStyleRounded)
+
+            ver   = getattr(self, "_update_version", "latest")
+            notes = getattr(self, "_release_notes", "") or "No release notes available."
+
+            alert = NSAlert.alloc().init()
+            alert.setMessageText_(f"Dictate {ver} is Available")
+            alert.setInformativeText_(
+                f"You have version {CURRENT_VERSION}. Would you like to update now?\n"
+                "Dictate will download the update and restart."
+            )
+            alert.addButtonWithTitle_("Update Now")
+            alert.addButtonWithTitle_("Later")
+
+            # Scrollable release notes
+            sv = NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, 420, 180))
+            sv.setHasVerticalScroller_(True)
+            sv.setAutohidesScrollers_(True)
+            sv.setBorderType_(1)  # NSBezelBorder
+
+            tv = NSTextView.alloc().initWithFrame_(NSMakeRect(0, 0, 420, 180))
+            tv.setEditable_(False)
+            tv.setSelectable_(True)
+            tv.setFont_(NSFont.systemFontOfSize_(11.5))
+            tv.setTextColor_(NSColor.secondaryLabelColor())
+            tv.setDrawsBackground_(False)
+            tv.textStorage().mutableString().setString_(notes)
+            tv.setTextContainerInset_((8, 8))
+
+            sv.setDocumentView_(tv)
+            alert.setAccessoryView_(sv)
+
+            response = alert.runModal()
+            return response == 1000  # NSAlertFirstButtonReturn
+        except Exception as e:
+            print(f"Update sheet error: {e}")
+            # Fallback to plain alert
+            response = rumps.alert(
+                title=f"Update to v{getattr(self, '_update_version', 'latest')}",
+                message="Dictate will download the latest version and restart.",
+                ok="Update Now", cancel="Later"
+            )
+            return response == 1
+
     def do_update(self, _):
-        response = rumps.alert(
-            title=f"Update to v{self._update_version}",
-            message="Dictate will download the latest version and restart.",
-            ok="Update", cancel="Later"
-        )
-        if response != 1:
+        confirmed = self._show_update_sheet()
+        if not confirmed:
             return
         try:
             files_to_update = ["server.py", "overlay.py", "settings_window.py", "app.py", "make_icons.py"]

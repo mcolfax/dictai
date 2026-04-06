@@ -29,7 +29,7 @@ def _log_error(msg):
         pass
 SAMPLE_RATE     = 16000
 OLLAMA_URL      = "http://localhost:11434/api/generate"
-APP_VERSION     = "1.5.7"
+APP_VERSION     = "1.5.8"
 GITHUB_RAW      = "https://raw.githubusercontent.com/mcolfax/dictate/main"
 MAX_RECORD_SECS = 120
 
@@ -56,6 +56,9 @@ DEFAULT_CONFIG = {
     "cleanup":          True,
     "clipboard_only":   False,
     "sound_feedback":   True,
+    "sound_start":      "Tink",
+    "sound_stop":       "Pop",
+    "sound_done":       "Glass",
     "pause_detection":  True,
     "pause_seconds":    2.0,
     "vocabulary":       [],
@@ -90,10 +93,23 @@ def load_stats():
     if os.path.exists(STATS_FILE):
         s = json.load(open(STATS_FILE))
         if s.get("date") != today:
+            # Roll over: archive today's counts into daily history
+            daily = s.get("daily", {})
+            if s.get("date") and s.get("words_today", 0) > 0:
+                daily[s["date"]] = s.get("words_today", 0)
+            # Trim to last 30 days
+            if len(daily) > 30:
+                for old in sorted(daily)[:-30]:
+                    del daily[old]
             s = {"date": today, "words_today": 0, "sessions_today": 0,
-                 "words_total": s.get("words_total", 0), "sessions_total": s.get("sessions_total", 0)}
+                 "words_total": s.get("words_total", 0),
+                 "sessions_total": s.get("sessions_total", 0),
+                 "daily": daily}
+        elif "daily" not in s:
+            s["daily"] = {}
     else:
-        s = {"date": today, "words_today": 0, "sessions_today": 0, "words_total": 0, "sessions_total": 0}
+        s = {"date": today, "words_today": 0, "sessions_today": 0,
+             "words_total": 0, "sessions_total": 0, "daily": {}}
     return s
 
 def save_stats(s):
@@ -106,6 +122,18 @@ def record_transcription_stats(text):
     s["words_today"] += words; s["sessions_today"] += 1
     s["words_total"] += words; s["sessions_total"] += 1
     save_stats(s)
+
+def get_weekly_stats():
+    """Return list of {date, words} for last 7 days including today."""
+    from datetime import timedelta
+    s = load_stats()
+    daily = s.get("daily", {})
+    today = date.today()
+    result = []
+    for i in range(6, -1, -1):
+        d = str(today - timedelta(days=i))
+        result.append({"date": d, "words": daily.get(d, 0) if d != str(today) else s.get("words_today", 0)})
+    return result
 
 # ── STATE ─────────────────────────────────────────────────────────────────────
 
@@ -138,17 +166,23 @@ OVERLAY_SOCKET     = os.path.join(_DATA_DIR, "overlay.sock")
 
 # ── SOUND ─────────────────────────────────────────────────────────────────────
 
-SOUNDS = {
-    "start": "/System/Library/Sounds/Tink.aiff",
-    "stop":  "/System/Library/Sounds/Pop.aiff",
-    "done":  "/System/Library/Sounds/Glass.aiff",
-    "error": "/System/Library/Sounds/Basso.aiff",
-}
+SYSTEM_SOUNDS_DIR = "/System/Library/Sounds"
+SYSTEM_SOUNDS = sorted([
+    os.path.splitext(f)[0]
+    for f in os.listdir(SYSTEM_SOUNDS_DIR) if f.endswith(".aiff")
+])
 
-def play_sound(name):
+def _sound_path(name: str) -> str:
+    return os.path.join(SYSTEM_SOUNDS_DIR, f"{name}.aiff")
+
+def play_sound(event: str):
+    """Play the user-configured sound for 'start', 'stop', 'done', or 'error'."""
     if not config.get("sound_feedback", True): return
-    path = SOUNDS.get(name)
-    if path and os.path.exists(path):
+    defaults = {"start": "Tink", "stop": "Pop", "done": "Glass", "error": "Basso"}
+    name = config.get(f"sound_{event}", defaults.get(event))
+    if not name or name == "None": return
+    path = _sound_path(name)
+    if os.path.exists(path):
         subprocess.Popen(["afplay", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 # ── OVERLAY ───────────────────────────────────────────────────────────────────
@@ -908,6 +942,14 @@ def api_capture_ui_cancel(): state["capturing_ui"] = False; return jsonify({"cap
 def api_combo_options():
     return jsonify([{"key": k, "label": v[0]} for k, v in COMBO_OPTIONS.items()])
 
+@app.route("/api/sounds", methods=["GET"])
+def api_sounds():
+    return jsonify(["None"] + SYSTEM_SOUNDS)
+
+@app.route("/api/stats/weekly", methods=["GET"])
+def api_stats_weekly():
+    return jsonify(get_weekly_stats())
+
 @app.route("/api/mic/start", methods=["POST"])
 def api_mic_start():
     threading.Thread(target=start_mic_test, daemon=True).start()
@@ -1205,10 +1247,14 @@ HTML = r"""<!DOCTYPE html>
   .indicator.transcribing .indicator-dot{background:var(--amber);animation:dot-pulse 1s ease infinite}
 
   /* ── Stats ── */
-  .stats-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:32px}
+  .stats-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px}
   .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
   .stat-value{font-family:'Syne',sans-serif;font-size:22px;font-weight:700;color:var(--amber);margin-bottom:2px}
   .stat-label{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+  .chart-bar{flex:1;background:rgba(245,158,11,.18);border-radius:3px 3px 0 0;min-height:2px;transition:height .3s ease;cursor:default;position:relative}
+  .chart-bar.today{background:rgba(245,158,11,.55)}
+  .chart-bar:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 4px);left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-size:10px;color:var(--text);white-space:nowrap;pointer-events:none;z-index:10}
+  .chart-label{flex:1;text-align:center;font-size:9px;color:var(--dim);letter-spacing:.03em}
 
   /* ── Tabs ── */
   .app-shell{display:flex;flex-direction:column;min-height:100vh}
@@ -1507,6 +1553,16 @@ HTML = r"""<!DOCTYPE html>
     <div class="stat-card"><div class="stat-value" id="statSessionsTotal">0</div><div class="stat-label">Sessions Total</div></div>
   </div>
 
+  <!-- Weekly chart -->
+  <div class="card" style="margin-top:16px">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px">
+      <span style="font-size:12px;font-weight:600;color:var(--text)">Last 7 Days</span>
+      <span style="font-size:11px;color:var(--dim)" id="chartPeak"></span>
+    </div>
+    <div id="weeklyChart" style="display:flex;align-items:flex-end;gap:6px;height:72px"></div>
+    <div id="weeklyLabels" style="display:flex;gap:6px;margin-top:6px"></div>
+  </div>
+
   </div><!-- end tab-home -->
 
   <div class="tab-panel" id="tab-general">
@@ -1580,6 +1636,20 @@ HTML = r"""<!DOCTYPE html>
           <span class="toggle-label" id="soundLabel">On</span>
           <label class="toggle-switch"><input type="checkbox" id="soundToggle" onchange="toggleSound()"><span class="toggle-slider"></span></label>
         </div>
+      </div>
+    </div>
+    <div class="settings-grid" id="soundPickerGrid">
+      <div class="field">
+        <div class="field-label">Start sound</div>
+        <select id="soundStart" onchange="autoSave()"></select>
+      </div>
+      <div class="field">
+        <div class="field-label">Stop sound</div>
+        <select id="soundStop" onchange="autoSave()"></select>
+      </div>
+      <div class="field">
+        <div class="field-label">Done sound</div>
+        <select id="soundDone" onchange="autoSave()"></select>
       </div>
     </div>
     <div class="settings-grid">
@@ -1984,6 +2054,8 @@ function applyStatus(data) {
 
     // Load mic devices now that config is available
     loadMicDevices();
+    loadSoundOptions(config);
+    loadWeeklyChart();
   }
 
   // History
@@ -2090,6 +2162,46 @@ async function loadMicDevices() {
   } catch(e) { console.error('Could not load mic devices', e); }
 }
 
+async function loadSoundOptions(cfg) {
+  try {
+    const sounds = await (await fetch('/api/sounds')).json();
+    const fields = [
+      ['soundStart', cfg.sound_start || 'Tink'],
+      ['soundStop',  cfg.sound_stop  || 'Pop'],
+      ['soundDone',  cfg.sound_done  || 'Glass'],
+    ];
+    fields.forEach(([id, cur]) => {
+      const sel = document.getElementById(id);
+      sel.innerHTML = sounds.map(s =>
+        `<option value="${s}" ${s === cur ? 'selected' : ''}>${s === 'None' ? '— None —' : s}</option>`
+      ).join('');
+    });
+  } catch(e) {}
+}
+
+async function loadWeeklyChart() {
+  try {
+    const data = await (await fetch('/api/stats/weekly')).json();
+    const max = Math.max(...data.map(d => d.words), 1);
+    const today = new Date().toISOString().slice(0, 10);
+    const chart = document.getElementById('weeklyChart');
+    const labels = document.getElementById('weeklyLabels');
+    const days = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+    chart.innerHTML = data.map(d => {
+      const h = Math.max(2, Math.round((d.words / max) * 72));
+      const day = days[new Date(d.date + 'T12:00:00').getDay()];
+      const isToday = d.date === today;
+      return `<div class="chart-bar${isToday?' today':''}" style="height:${h}px" data-tip="${d.words} words"></div>`;
+    }).join('');
+    labels.innerHTML = data.map(d => {
+      const day = days[new Date(d.date + 'T12:00:00').getDay()];
+      return `<span class="chart-label">${day}</span>`;
+    }).join('');
+    const peak = Math.max(...data.map(d => d.words));
+    document.getElementById('chartPeak').textContent = peak > 0 ? `peak ${peak.toLocaleString()} words` : '';
+  } catch(e) {}
+}
+
 async function saveMicDevice() {
   const val = document.getElementById('micDeviceSelect').value;
   config.mic_device = val || null;
@@ -2119,7 +2231,13 @@ function toggleOverlay() { overlayEnabled = document.getElementById('overlayTogg
 function updatePauseLabel() { const v = document.getElementById('pauseSeconds').value; document.getElementById('pauseSecondsVal').textContent = v + 's'; }
 function updateCleanupUI() { const l = document.getElementById('cleanupLabel'); l.textContent = cleanupEnabled ? 'On' : 'Off — raw only'; l.className = 'toggle-label' + (cleanupEnabled ? '' : ' off'); document.querySelectorAll('.tone-btn').forEach(b => b.classList.toggle('disabled', !cleanupEnabled)); }
 function updateClipboardUI() { const l = document.getElementById('clipboardLabel'); l.textContent = clipboardOnly ? 'Clipboard only' : 'Auto-paste'; l.className = 'toggle-label' + (clipboardOnly ? ' off' : ''); }
-function updateSoundUI() { const l = document.getElementById('soundLabel'); l.textContent = soundEnabled ? 'On' : 'Off'; l.className = 'toggle-label' + (soundEnabled ? '' : ' off'); }
+function updateSoundUI() {
+  const l = document.getElementById('soundLabel');
+  l.textContent = soundEnabled ? 'On' : 'Off';
+  l.className = 'toggle-label' + (soundEnabled ? '' : ' off');
+  document.getElementById('soundPickerGrid').style.opacity = soundEnabled ? '1' : '0.4';
+  document.getElementById('soundPickerGrid').style.pointerEvents = soundEnabled ? '' : 'none';
+}
 function updatePauseUI() { const v = document.getElementById('pauseSeconds').value; const l = document.getElementById('pauseLabel'); l.textContent = pauseEnabled ? `On — ${v}s silence` : 'Off'; l.className = 'toggle-label' + (pauseEnabled ? '' : ' off'); document.getElementById('pauseSecondsField').style.opacity = pauseEnabled ? '1' : '0.4'; }
 function updateOverlayUI() { const l = document.getElementById('overlayLabel'); l.textContent = overlayEnabled ? 'On' : 'Off'; l.className = 'toggle-label' + (overlayEnabled ? '' : ' off'); }
 
@@ -2143,6 +2261,9 @@ async function autoSave() {
     cleanup:             cleanupEnabled,
     clipboard_only:      clipboardOnly,
     sound_feedback:      soundEnabled,
+    sound_start:         document.getElementById('soundStart').value,
+    sound_stop:          document.getElementById('soundStop').value,
+    sound_done:          document.getElementById('soundDone').value,
     pause_detection:     pauseEnabled,
     pause_seconds:       parseFloat(document.getElementById('pauseSeconds').value),
     overlay_enabled:     overlayEnabled,
