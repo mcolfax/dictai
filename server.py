@@ -29,7 +29,7 @@ def _log_error(msg):
         pass
 SAMPLE_RATE     = 16000
 OLLAMA_URL      = "http://localhost:11434/api/generate"
-APP_VERSION     = "1.5.4"
+APP_VERSION     = "1.5.5"
 GITHUB_RAW      = "https://raw.githubusercontent.com/mcolfax/dictate/main"
 MAX_RECORD_SECS = 120
 
@@ -944,7 +944,7 @@ HTML = r"""<!DOCTYPE html>
     --text:#111111;--dim:#888888;--overlay-bg:rgba(240,240,240,0.85);
   }
 
-  html,body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:13px;min-height:100vh;line-height:1.5;transition:background .2s,color .2s}
+  html,body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-size:13px;min-height:100vh;line-height:1.5;transition:background .2s,color .2s}
   .app{max-width:820px;margin:0 auto;padding:48px 24px 80px}
 
   /* ── Header ── */
@@ -957,7 +957,7 @@ HTML = r"""<!DOCTYPE html>
   .theme-toggle:hover{border-color:var(--amber);color:var(--amber)}
 
   /* ── Power ── */
-  .power-section{display:flex;align-items:center;gap:32px;margin-bottom:40px;padding:28px 32px;background:var(--surface);border:1px solid var(--border);border-radius:4px}
+  .power-section{display:flex;align-items:center;gap:32px;margin-bottom:40px;padding:28px 32px;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.15)}
   .power-btn{width:72px;height:72px;border-radius:50%;border:2px solid var(--muted);background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;flex-shrink:0;position:relative}
   .power-btn svg{transition:all .2s}
   .power-btn:hover{border-color:var(--amber)}.power-btn:hover svg{stroke:var(--amber)}
@@ -977,7 +977,7 @@ HTML = r"""<!DOCTYPE html>
 
   /* ── Stats ── */
   .stats-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:32px}
-  .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:12px 14px}
+  .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
   .stat-value{font-family:'Syne',sans-serif;font-size:22px;font-weight:700;color:var(--amber);margin-bottom:2px}
   .stat-label{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
 
@@ -990,8 +990,8 @@ HTML = r"""<!DOCTYPE html>
   /* ── Fields ── */
   .section-label{font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:var(--dim);margin-bottom:12px;padding-left:2px}
   .settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
-  .field{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:14px 16px;transition:border-color .15s}
-  .field:hover{border-color:var(--muted)}
+  .field{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;transition:border-color .15s,box-shadow .15s;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+  .field:hover{border-color:var(--muted);box-shadow:0 2px 8px rgba(0,0,0,.18)}
   .field-label{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:8px}
   select{width:100%;background:transparent;border:none;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:13px;outline:none;cursor:pointer;appearance:none;-webkit-appearance:none}
   select option{background:var(--surface)}
@@ -1007,7 +1007,7 @@ HTML = r"""<!DOCTYPE html>
   .toggle-label{font-size:13px;color:var(--text)}.toggle-label.off{color:var(--dim)}
 
   /* ── Hotkey ── */
-  .hotkey-field{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:14px 16px;transition:border-color .15s}
+  .hotkey-field{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;transition:border-color .15s}
   .hotkey-field.capturing{border-color:var(--amber);animation:capture-pulse 1s ease infinite}
   .hotkey-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
   .hotkey-value{color:var(--text);font-size:13px;flex:1}
@@ -1017,12 +1017,12 @@ HTML = r"""<!DOCTYPE html>
 
   /* ── Tone ── */
   .tone-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
-  .tone-btn{padding:10px 0;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--dim);font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;transition:all .15s;text-align:center}
+  .tone-btn{padding:10px 0;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--dim);font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;transition:all .15s;text-align:center}
   .tone-btn:hover{border-color:var(--muted);color:var(--text)}.tone-btn.active{border-color:var(--amber);color:var(--amber);background:rgba(245,158,11,.06)}
   .tone-btn.disabled{opacity:.3;pointer-events:none}
 
   /* ── Mic ── */
-  .mic-section{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:16px;margin-bottom:12px}
+  .mic-section{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px}
   .mic-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
   .mic-btn{font-size:10px;letter-spacing:.1em;text-transform:uppercase;background:var(--muted);border:none;border-radius:3px;padding:5px 12px;cursor:pointer;font-family:'JetBrains Mono',monospace;transition:all .15s;color:var(--dim)}
   .mic-btn:hover{color:var(--text);background:#444}.mic-btn.testing{background:rgba(239,68,68,.15);color:var(--red)}
@@ -1054,11 +1054,17 @@ HTML = r"""<!DOCTYPE html>
   .divider{height:1px;background:var(--border);margin:32px 0}
 
   /* ── History ── */
-  .history-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .history-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .history-search{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-size:12px;outline:none;margin-bottom:12px;font-family:inherit;transition:border-color .15s}
+  .history-search:focus{border-color:var(--amber)}
+  .history-search::placeholder{color:var(--dim)}
+  .history-copy-btn{font-size:10px;letter-spacing:.05em;text-transform:uppercase;background:transparent;border:1px solid var(--border);border-radius:5px;padding:3px 8px;cursor:pointer;color:var(--dim);font-family:-apple-system,sans-serif;transition:all .15s;flex-shrink:0}
+  .history-copy-btn:hover{border-color:var(--amber);color:var(--amber)}
+  .history-copy-btn.copied{border-color:var(--green);color:var(--green)}
   .clear-btn{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);background:none;border:none;cursor:pointer;font-family:'JetBrains Mono',monospace;transition:color .15s}
   .clear-btn:hover{color:var(--red)}
   .history-list{display:flex;flex-direction:column;gap:8px}
-  .history-item{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:14px 16px;animation:slide-in .2s ease}
+  .history-item{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;animation:slide-in .2s ease}
   .history-meta{font-size:10px;color:var(--dim);margin-bottom:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .badge{font-size:9px;letter-spacing:.08em;text-transform:uppercase;padding:2px 6px;border-radius:2px}
   .badge.raw-badge{background:rgba(102,102,102,.2);color:var(--dim)}
@@ -1429,6 +1435,7 @@ HTML = r"""<!DOCTYPE html>
     <div class="section-label" style="margin:0">Recent Transcriptions</div>
     <button class="clear-btn" onclick="clearHistory()">Clear</button>
   </div>
+  <input class="history-search" id="historySearch" placeholder="Search transcriptions…" oninput="filterHistory()" />
   <div class="history-list" id="historyList">
     <div class="empty-state">No transcriptions yet</div>
   </div>
@@ -1696,13 +1703,15 @@ function applyStatus(data) {
     if (!history || history.length === 0) {
       list.innerHTML = '<div class="empty-state">No transcriptions yet</div>';
     } else {
-      list.innerHTML = history.map(h => `
+      _historyData = history;
+      list.innerHTML = history.map((h,i) => `
         <div class="history-item">
           <div class="history-meta">
             <span>${h.ts}</span>
             ${h.app ? `<span class="badge app-badge">${escHtml(h.app)}</span>` : ''}
             ${h.lang ? `<span class="badge lang-badge">${h.lang}</span>` : ''}
             <span class="badge ${h.cleanup_used ? 'clean-badge' : 'raw-badge'}">${h.cleanup_used ? 'AI cleaned' : 'raw'}</span>
+            <button class="history-copy-btn" id="hcopy${i}" onclick="copyHistory(${i},this)"">Copy</button>
           </div>
           <div class="history-text">${escHtml(h.cleaned)}</div>
           ${h.cleanup_used && h.raw !== h.cleaned ? `<div class="history-raw-text">raw: ${escHtml(h.raw)}</div>` : ''}
@@ -1712,6 +1721,24 @@ function applyStatus(data) {
 }
 
 function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+let _historyData = [];
+function copyHistory(idx, btn) {
+  const text = _historyData[idx]?.cleaned;
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+  }).catch(() => {});
+}
+function filterHistory() {
+  const q = document.getElementById('historySearch').value.toLowerCase();
+  document.querySelectorAll('.history-item').forEach((el, i) => {
+    const text = (_historyData[i]?.cleaned || '').toLowerCase();
+    el.style.display = (!q || text.includes(q)) ? '' : 'none';
+  });
+}
 
 function showTab(name) {
   document.querySelectorAll('.tab').forEach((t,i) => {

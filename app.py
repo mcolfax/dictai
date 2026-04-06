@@ -20,7 +20,7 @@ SETTINGS_PATH   = _runtime_path("settings_window.py")
 OLLAMA_BIN      = "/opt/homebrew/bin/ollama"
 BREW_BIN        = "/opt/homebrew/bin/brew"
 
-CURRENT_VERSION = "1.5.4"
+CURRENT_VERSION = "1.5.5"
 GITHUB_USER     = "mcolfax"
 GITHUB_REPO     = "dictate"
 GITHUB_RAW      = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main"
@@ -92,13 +92,21 @@ class DictateApp(rumps.App):
         except Exception:
             pass
 
+        self._last_text  = ""
         self.toggle_item = rumps.MenuItem("Enable Dictation", callback=self.toggle_dictation)
         self.update_item = rumps.MenuItem("", callback=self.do_update)
         self.update_item.hide()
+        self.last_item   = rumps.MenuItem("No transcriptions yet", callback=self.copy_last)
+        self.last_item._menuitem.setEnabled_(False)
+        self.words_item  = rumps.MenuItem("0 words today")
+        self.words_item._menuitem.setEnabled_(False)
 
         self.menu = [
             rumps.MenuItem("Open Dictate UI", callback=self.open_ui),
             self.toggle_item,
+            None,
+            self.last_item,
+            self.words_item,
             None,
             self.update_item,
             rumps.MenuItem("About Dictate", callback=self.about),
@@ -296,6 +304,20 @@ class DictateApp(rumps.App):
                     self._enabled = enabled
                     self.toggle_item.title = "Disable Dictation" if enabled else "Enable Dictation"
 
+                history = data.get("history", [])
+                if history:
+                    last = history[0]["cleaned"]
+                    self._last_text = last
+                    snippet = last[:60] + ("…" if len(last) > 60 else "")
+                    new_title = "\u201c" + snippet + "\u201d"
+                    if self.last_item.title != new_title:
+                        self.last_item.title = new_title
+                        self.last_item._menuitem.setEnabled_(True)
+
+                stats = data.get("stats", {})
+                words = stats.get("words_today", 0)
+                self.words_item.title = f"{words:,} words today"
+
             except Exception:
                 pass
             time.sleep(0.15)  # ~6 fps animation
@@ -373,6 +395,17 @@ class DictateApp(rumps.App):
             rumps.alert("Update Failed", "Could not download update. Check your internet connection and try again.")
 
     # ── CONTROLS ──────────────────────────────────────────────────────────────
+
+    def copy_last(self, _):
+        if not self._last_text:
+            return
+        try:
+            from AppKit import NSPasteboard, NSPasteboardTypeString
+            pb = NSPasteboard.generalPasteboard()
+            pb.clearContents()
+            pb.setString_forType_(self._last_text, NSPasteboardTypeString)
+        except Exception:
+            pass
 
     def about(self, _):
         rumps.alert(
