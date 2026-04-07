@@ -19,6 +19,7 @@ _DATA_DIR   = os.environ.get("APP_DATA_DIR", os.path.dirname(os.path.abspath(__f
 CONFIG_FILE = os.path.join(_DATA_DIR, 'config.json')
 STATS_FILE  = os.path.join(_DATA_DIR, 'stats.json')
 ERROR_LOG   = os.path.join(_DATA_DIR, 'error.log')
+HISTORY_FILE = os.path.join(_DATA_DIR, 'history.json')
 LAUNCH_AGENT_PLIST = os.path.expanduser("~/Library/LaunchAgents/com.dictate.app.plist")
 
 def _log_error(msg):
@@ -29,7 +30,7 @@ def _log_error(msg):
         pass
 SAMPLE_RATE     = 16000
 OLLAMA_URL      = "http://localhost:11434/api/generate"
-APP_VERSION     = "1.5.9"
+APP_VERSION     = "1.6.0"
 GITHUB_RAW      = "https://raw.githubusercontent.com/mcolfax/dictate/main"
 MAX_RECORD_SECS = 120
 
@@ -85,6 +86,21 @@ def save_config(cfg):
         json.dump(cfg, f, indent=2)
 
 config = load_config()
+
+def load_history():
+    try:
+        if os.path.exists(HISTORY_FILE):
+            return json.load(open(HISTORY_FILE))
+    except Exception:
+        pass
+    return []
+
+def save_history(h):
+    try:
+        with open(HISTORY_FILE, 'w') as f:
+            json.dump(h[:100], f)  # keep last 100
+    except Exception:
+        pass
 
 # ── STATS ─────────────────────────────────────────────────────────────────────
 
@@ -145,7 +161,7 @@ state = {
     "capturing_ui":      False,   # Capturing UI shortcut
     "mic_testing":       False,
     "mic_level":         0,
-    "history":           [],
+    "history":           load_history(),
     "_recorded_frames":  [],
     "overlay_text":      "",      # Real-time overlay text
     "partial_chunks":    [],      # Accumulated partial transcriptions
@@ -252,7 +268,11 @@ def show_overlay():
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        time.sleep(0.5)  # Wait for socket to bind
+        # Poll for socket readiness instead of fixed sleep
+        for _ in range(20):
+            if os.path.exists(OVERLAY_SOCKET):
+                break
+            time.sleep(0.1)
     except Exception as e:
         print(f"⚠️  Overlay launch error: {e}")
 
@@ -556,7 +576,8 @@ print(json.dumps({{"text": result["text"], "language": result.get("language", "e
                  "app": active_app, "cleanup_used": config.get("cleanup", True),
                  "tone_used": active_tone, "lang": detected_lang}
         state["history"].insert(0, entry)
-        state["history"] = state["history"][:30]
+        state["history"] = state["history"][:100]
+        save_history(state["history"])
         play_sound("done")
     except Exception as e:
         _log_error(f"Transcription: {e}")
@@ -942,6 +963,21 @@ def api_capture_ui_cancel(): state["capturing_ui"] = False; return jsonify({"cap
 def api_combo_options():
     return jsonify([{"key": k, "label": v[0]} for k, v in COMBO_OPTIONS.items()])
 
+@app.route("/api/combo/status", methods=["GET"])
+def api_combo_status():
+    """Return which combo modifier keys are currently held."""
+    held = []
+    if any(k in _held_modifiers for k in (kb.Key.cmd, kb.Key.cmd_r)):
+        held.append("cmd")
+    if any(k in _held_modifiers for k in (kb.Key.shift, kb.Key.shift_r)):
+        held.append("shift")
+    if any(k in _held_modifiers for k in (kb.Key.alt, kb.Key.alt_r)):
+        held.append("alt")
+    if any(k in _held_modifiers for k in (kb.Key.ctrl, kb.Key.ctrl_r)):
+        held.append("ctrl")
+    active = _combo_is_active(config.get("hotkey", "cmd+shift+alt"))
+    return jsonify({"held": held, "active": active})
+
 @app.route("/api/sounds", methods=["GET"])
 def api_sounds():
     return jsonify(["None"] + SYSTEM_SOUNDS)
@@ -999,7 +1035,21 @@ def api_app_tones_set():
 
 @app.route("/api/history/clear", methods=["POST"])
 def api_clear_history():
-    state["history"] = []; return jsonify({"ok": True})
+    state["history"] = []
+    save_history([])
+    return jsonify({"ok": True})
+
+@app.route("/api/history/repaste/<int:idx>", methods=["POST"])
+def api_history_repaste(idx):
+    try:
+        entry = state["history"][idx]
+        text  = entry.get("cleaned") or entry.get("raw", "")
+        if not text:
+            return jsonify({"error": "empty"}), 400
+        output_text(text)
+        return jsonify({"ok": True})
+    except IndexError:
+        return jsonify({"error": "not found"}), 404
 
 @app.route("/api/history/export")
 def api_history_export():
@@ -1630,6 +1680,10 @@ HTML = r"""<!DOCTYPE html>
           <span class="hotkey-value" id="hotkeyValue">⌘⇧⌥</span>
           <select id="comboSelect" onchange="saveCombo()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 8px;font-size:12px;cursor:pointer"></select>
         </div>
+        <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+          <span style="font-size:11px;color:var(--dim)">Hold your combo to test:</span>
+          <span id="comboTester" style="font-size:12px;color:var(--dim);font-family:'JetBrains Mono',monospace;padding:3px 8px;border-radius:5px;background:var(--surface);border:1px solid var(--border);transition:all .15s">—</span>
+        </div>
       </div>
     </div>
     <div class="settings-grid">
@@ -2140,7 +2194,8 @@ function applyStatus(data) {
             ${h.app ? `<span class="badge app-badge">${escHtml(h.app)}</span>` : ''}
             ${h.lang ? `<span class="badge lang-badge">${h.lang}</span>` : ''}
             <span class="badge ${h.cleanup_used ? 'clean-badge' : 'raw-badge'}">${h.cleanup_used ? 'AI cleaned' : 'raw'}</span>
-            <button class="history-copy-btn" id="hcopy${i}" onclick="copyHistory(${i},this)"">Copy</button>
+            <button class="history-copy-btn" id="hcopy${i}" onclick="copyHistory(${i},this)">Copy</button>
+            <button class="history-copy-btn" onclick="repaste(${i})" title="Re-inject into frontmost app">↩ Paste</button>
           </div>
           <div class="history-text">${escHtml(h.cleaned)}</div>
           ${h.cleanup_used && h.raw !== h.cleaned ? `<div class="history-raw-text">raw: ${escHtml(h.raw)}</div>` : ''}
@@ -2160,6 +2215,9 @@ function copyHistory(idx, btn) {
     btn.classList.add('copied');
     setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
   }).catch(() => {});
+}
+async function repaste(i) {
+  await fetch(`/api/history/repaste/${i}`, {method:'POST'});
 }
 function filterHistory() {
   const q = document.getElementById('historySearch').value.trim();
@@ -2452,6 +2510,26 @@ fetch('/api/version').then(r=>r.json()).then(d => {
 loadComboOptions();
 fetchStatus();
 setInterval(fetchStatus, 1000);
+setInterval(async () => {
+  try {
+    const d = await (await fetch('/api/combo/status')).json();
+    const el = document.getElementById('comboTester');
+    if (!el) return;
+    if (d.active) {
+      el.textContent = '✓ Combo active!';
+      el.style.color = 'var(--amber)';
+      el.style.borderColor = 'var(--amber)';
+    } else if (d.held.length) {
+      el.textContent = d.held.map(k => ({'cmd':'⌘','shift':'⇧','alt':'⌥','ctrl':'⌃'}[k]||k)).join('') + '…';
+      el.style.color = 'var(--dim)';
+      el.style.borderColor = 'var(--border)';
+    } else {
+      el.textContent = '—';
+      el.style.color = 'var(--dim)';
+      el.style.borderColor = 'var(--border)';
+    }
+  } catch(e) {}
+}, 150);
 </script>
 </body>
 </html>"""

@@ -21,7 +21,7 @@ SETTINGS_PATH   = _runtime_path("settings_window.py")
 OLLAMA_BIN      = "/opt/homebrew/bin/ollama"
 BREW_BIN        = "/opt/homebrew/bin/brew"
 
-CURRENT_VERSION = "1.5.9"
+CURRENT_VERSION = "1.6.0"
 GITHUB_USER     = "mcolfax"
 GITHUB_REPO     = "dictate"
 GITHUB_RAW      = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main"
@@ -38,16 +38,19 @@ class _PopoverController(NSObject):
 
     @python_method
     def setup(self, status_item, menu, url_str):
-        from AppKit import (NSPopover, NSViewController, NSView, NSMakeRect, NSMakeSize)
+        from AppKit import (NSPopover, NSViewController, NSView, NSMakeRect, NSMakeSize,
+                            NSEventMaskLeftMouseDown, NSEventMaskRightMouseDown)
         from WebKit import WKWebView, WKWebViewConfiguration
         from Foundation import NSURL, NSURLRequest
         import objc
 
         self._status_item = status_item
-        self._menu = menu
+        self._menu        = menu
+        self._url_str     = url_str
 
-        # Intercept the status item's button — left click = popover, right = menu
+        # Remove the rumps-set menu so button clicks are routed to our action
         status_item.setMenu_(None)
+
         btn = status_item.button()
         btn.setTarget_(self)
         btn.setAction_(objc.selector(
@@ -55,40 +58,50 @@ class _PopoverController(NSObject):
             selector=b'popoverBtnClicked:',
             signature=b'v@:@'
         ))
-        btn.sendActionOn_(2 | 8)  # NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown
+        # Respond to both left and right mouse-down immediately
+        btn.sendActionOn_(NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown)
 
-        # Build popover with WKWebView
+        # Build popover
         self._popover = NSPopover.alloc().init()
-        self._popover.setBehavior_(1)  # NSPopoverBehaviorTransient — auto-close on outside click
-        w, h = 300, 252
-        vc = NSViewController.alloc().init()
+        self._popover.setBehavior_(1)  # NSPopoverBehaviorTransient
+        w, h = 300, 260
+        vc    = NSViewController.alloc().init()
         frame = NSMakeRect(0, 0, w, h)
-        view = NSView.alloc().initWithFrame_(frame)
-        cfg = WKWebViewConfiguration.alloc().init()
+        view  = NSView.alloc().initWithFrame_(frame)
+        cfg   = WKWebViewConfiguration.alloc().init()
         self._wv = WKWebView.alloc().initWithFrame_configuration_(frame, cfg)
-        self._wv.setAutoresizingMask_(18)
+        self._wv.setAutoresizingMask_(18)  # NSViewWidthSizable | NSViewHeightSizable
         view.addSubview_(self._wv)
         vc.setView_(view)
         self._popover.setContentSize_(NSMakeSize(w, h))
         self._popover.setContentViewController_(vc)
 
-        url = NSURL.URLWithString_(url_str)
+        self._load_url()
+
+    @python_method
+    def _load_url(self):
+        from Foundation import NSURL, NSURLRequest
+        url = NSURL.URLWithString_(self._url_str)
         self._wv.loadRequest_(NSURLRequest.requestWithURL_(url))
 
     def popoverBtnClicked_(self, sender):
         from AppKit import NSApp
         event = NSApp.currentEvent()
-        # type 3 = NSEventTypeRightMouseDown, flag 1<<18 = control key
-        is_right = event and (event.type() == 3 or (event.modifierFlags() & (1 << 18)))
+        # Right-click (type 3) or Ctrl+click (modifierFlags bit 18) → show menu
+        is_right = event and (
+            event.type() == 3 or
+            bool(event.modifierFlags() & (1 << 18))
+        )
         if is_right:
             self._status_item.popUpStatusItemMenu_(self._menu)
         elif self._popover.isShown():
-            self._popover.close()
+            self._popover.performClose_(sender)
         else:
+            # Reload so the popover always shows fresh data
+            self._load_url()
             btn = self._status_item.button()
-            # 1 = NSRectEdgeMinY — popover appears below the status bar button
             self._popover.showRelativeToRect_ofView_preferredEdge_(
-                btn.bounds(), btn, 1)
+                btn.bounds(), btn, 1)  # NSRectEdgeMinY — below the menu bar
 
 # ── PATCH RUMPS DELEGATE ──────────────────────────────────────────────────────
 
