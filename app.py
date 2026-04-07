@@ -321,7 +321,12 @@ class DictateApp(rumps.App):
                 self.template = True
                 self.icon = os.path.join(APP_RESOURCES, "icon_menubar.png")
                 self._open_settings_window()
-                self._setup_popover()
+                # WKWebView must be created on the main thread — dispatch via NSOperationQueue
+                try:
+                    from Foundation import NSOperationQueue
+                    NSOperationQueue.mainQueue().addOperationWithBlock_(self._setup_popover)
+                except Exception as e:
+                    print(f"Could not dispatch popover setup: {e}")
                 break
             except Exception:
                 time.sleep(0.5)
