@@ -74,6 +74,7 @@ DEFAULT_CONFIG = {
     "mic_device":       None,      # None = system default; device name string to override
     "remove_fillers":   False,     # Strip um/uh/er filler words
     "launch_at_login":  False,
+    "enabled":          False,     # Persisted on/off state
 }
 
 def load_config():
@@ -154,7 +155,7 @@ def get_weekly_stats():
 # ── STATE ─────────────────────────────────────────────────────────────────────
 
 state = {
-    "enabled":           False,
+    "enabled":           config.get("enabled", False),
     "recording":         False,
     "transcribing":      False,
     "capturing":         False,
@@ -1089,6 +1090,10 @@ def on_kb_press(key):
 def on_kb_release(key):
     global _combo_triggered, _kb_cap_mods, _kb_cap_trigger, _kb_cap_trigger_name
 
+    # Always keep _held_modifiers clean — needed even during capture
+    if key in _COMBO_MODIFIERS:
+        _held_modifiers.discard(key)
+
     # ── Keyboard capture: finalize on release ─────────────────────────────
     if state["capturing"] and state["capturing_type"] == "keyboard":
         key_name = _kb_key_name(key)
@@ -1143,10 +1148,6 @@ def on_kb_release(key):
                         print(f"✅ Keyboard hotkey set: {hk_label}")
             state["kb_preview"] = _kb_preview_label()
         return
-
-    # Update held modifiers
-    if key in _COMBO_MODIFIERS:
-        _held_modifiers.discard(key)
 
     # ── Keyboard hotkey release ───────────────────────────────────────────
     if config.get("hotkey_type") == "keyboard":
@@ -1210,10 +1211,35 @@ def start_listener():
         if l:
             try: l.stop()
             except: pass
+    # Request accessibility permission — opens System Prefs if not yet granted.
+    # This is a no-op if already trusted.
+    try:
+        from ApplicationServices import AXIsProcessTrustedWithOptions
+        AXIsProcessTrustedWithOptions({"AXTrustedCheckOptionPrompt": True})
+    except Exception:
+        pass
     _kb_listener = kb.Listener(on_press=on_kb_press, on_release=on_kb_release)
     _kb_listener.daemon = True; _kb_listener.start()
     _ms_listener = ms.Listener(on_click=on_ms_click)
     _ms_listener.daemon = True; _ms_listener.start()
+
+_accessibility_was_granted = False
+
+def _accessibility_watchdog():
+    """Restart the pynput listener when accessibility is granted after startup."""
+    global _accessibility_was_granted
+    while True:
+        time.sleep(3)
+        try:
+            granted = _accessibility_granted()
+            if granted and not _accessibility_was_granted:
+                _accessibility_was_granted = True
+                print("✅ Accessibility granted — restarting keyboard/mouse listener")
+                start_listener()
+            elif not granted:
+                _accessibility_was_granted = False
+        except Exception:
+            pass
 
 # ── API ───────────────────────────────────────────────────────────────────────
 
@@ -1237,6 +1263,8 @@ def api_status():
 @app.route("/api/toggle", methods=["POST"])
 def api_toggle():
     state["enabled"] = not state["enabled"]
+    config["enabled"] = state["enabled"]
+    save_config(config)
     if not state["enabled"] and state["recording"]:
         threading.Thread(target=stop_and_transcribe, daemon=True).start()
     return jsonify({"enabled": state["enabled"]})
@@ -3048,6 +3076,8 @@ if __name__ == "__main__":
 
     show_overlay()  # Pre-launch so it's ready when first recording starts
     start_listener()
+    # Background watchdog: restarts listener when accessibility is granted post-launch
+    threading.Thread(target=_accessibility_watchdog, daemon=True).start()
     print("━" * 50)
     print("🎤  Dictation server ready")
     print("    Open http://localhost:5001 in Arc")
