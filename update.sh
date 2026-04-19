@@ -1,22 +1,23 @@
 #!/bin/bash
-# update.sh — Downloaded and run by Dictate.app when user clicks Update
-# Args: $1 = APP_DATA_DIR, $2 = APP_RESOURCES (inside .app bundle)
+# update.sh — sync git source → app bundle
+# Run this after `git pull`, then relaunch Dictate from /Applications.
 
-APP_DATA_DIR="${1:-$HOME/.dictate}"
-APP_RESOURCES="${2:-/Applications/Dictate.app/Contents/Resources}"
-GITHUB_RAW="https://raw.githubusercontent.com/mcolfax/dictate/main"
+set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RESOURCES="/Applications/Dictate.app/Contents/Resources"
 
-echo "⏳ Updating Dictate…"
-sleep 1  # Let old process exit
+echo "→ Copying Python files into app bundle and ~/.dictate/..."
+for f in app.py server.py settings_window.py overlay.py make_icons.py; do
+    cp "$SCRIPT_DIR/$f" "$RESOURCES/$f"
+    cp "$SCRIPT_DIR/$f" "$HOME/.dictate/$f"
+done
 
-# Download updated Python files into the bundle
-curl -fsSL "$GITHUB_RAW/server.py"     -o "$APP_RESOURCES/server.py"
-curl -fsSL "$GITHUB_RAW/app.py"        -o "$APP_RESOURCES/app.py"
-curl -fsSL "$GITHUB_RAW/make_icons.py" -o "$APP_RESOURCES/make_icons.py"
+echo "→ Regenerating icons..."
+"$HOME/.dictate/venv/bin/python3" "$SCRIPT_DIR/make_icons.py" --outdir "$RESOURCES"
+cp "$RESOURCES"/icon*.png "$HOME/.dictate/" 2>/dev/null
 
-# Regenerate icons in case they changed
-"$APP_DATA_DIR/venv/bin/python3" "$APP_RESOURCES/make_icons.py" --output "$APP_RESOURCES"
+echo "→ Removing quarantine..."
+xattr -dr com.apple.quarantine /Applications/Dictate.app 2>/dev/null || true
 
-echo "✅ Update complete — restarting Dictate"
-sleep 1
-open /Applications/Dictate.app
+echo ""
+echo "✅ Done. Relaunch Dictate from /Applications to apply changes."

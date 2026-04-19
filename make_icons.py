@@ -5,10 +5,15 @@ Creates: icon_menubar.png, icon_menubar_on.png, icon_menubar_anim_N.png,
          icon_dock.png, icon.icns
 """
 
-import os, struct, zlib, math
+import os, sys, struct, zlib, math
 from pathlib import Path
 
-APP_DIR = Path(__file__).parent
+# Allow --outdir to write icons somewhere other than the script's directory
+if "--outdir" in sys.argv:
+    idx = sys.argv.index("--outdir")
+    APP_DIR = Path(sys.argv[idx + 1])
+else:
+    APP_DIR = Path(__file__).parent
 
 
 # ── PNG writer ──────────────────────────────────────────────────────────────
@@ -54,7 +59,7 @@ def make_menubar_pixels(width, height, bar_heights, bar_color):
     return pixels
 
 
-WAVEFORM = [0.28, 0.52, 0.76, 1.0, 0.76, 0.52, 0.28, 0.52, 0.76, 0.52, 0.28]
+WAVEFORM = [0.40, 0.70, 1.00, 0.70, 0.40]
 
 # Off (idle) — white for template rendering
 pixels = make_menubar_pixels(22, 22, WAVEFORM, (255, 255, 255, 220))

@@ -5,7 +5,7 @@ First launch: silently installs dependencies with menu bar progress.
 Subsequent launches: starts normally.
 """
 
-import subprocess, sys, os, time, urllib.request, json, threading, shutil, re
+import subprocess, sys, os, time, urllib.request, json, threading, shutil, re, traceback
 from objc import python_method
 
 APP_RESOURCES   = os.environ.get("APP_RESOURCES", os.path.dirname(os.path.abspath(__file__)))
@@ -21,7 +21,7 @@ SETTINGS_PATH   = _runtime_path("settings_window.py")
 OLLAMA_BIN      = "/opt/homebrew/bin/ollama"
 BREW_BIN        = "/opt/homebrew/bin/brew"
 
-CURRENT_VERSION = "1.7.0"
+CURRENT_VERSION = "1.8.0"
 GITHUB_USER     = "mcolfax"
 GITHUB_REPO     = "dictate"
 GITHUB_RAW      = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main"
@@ -85,30 +85,99 @@ class _PopoverController(NSObject):
         self._wv.loadRequest_(NSURLRequest.requestWithURL_(url))
 
     def popoverBtnClicked_(self, sender):
-        from AppKit import NSApp
-        event = NSApp.currentEvent()
-        # Right-click (type 3) or Ctrl+click (modifierFlags bit 18) → show menu
-        is_right = event and (
-            event.type() == 3 or
-            bool(event.modifierFlags() & (1 << 18))
-        )
-        if is_right:
-            self._status_item.popUpStatusItemMenu_(self._menu)
-        elif self._popover.isShown():
+        # Any click (left or right) toggles the popover.
+        if self._popover.isShown():
             self._popover.performClose_(sender)
         else:
-            # Reload so the popover always shows fresh data
-            self._load_url()
+            self._load_url()  # reload for fresh data
             btn = self._status_item.button()
             self._popover.showRelativeToRect_ofView_preferredEdge_(
                 btn.bounds(), btn, 1)  # NSRectEdgeMinY — below the menu bar
 
-# ── PATCH RUMPS DELEGATE ──────────────────────────────────────────────────────
+    def menuBtnClicked_(self, sender):
+        """Simple click handler: always pop up the rumps menu.
+        Used when the popover is not needed — just need a click target so the
+        status item menu can be detached from the item (required on macOS 26 for
+        custom button images to render).
+        """
+        try:
+            self._status_item.popUpStatusItemMenu_(self._menu)
+        except Exception as e:
+            print(f"[menu] menuBtnClicked_ error: {e}", flush=True)
 
-# Patch rumps' internal NSApp delegate to handle dock icon clicks.
-# rumps sets its own NSApp (NSObject subclass) as NSApplication's delegate,
-# so methods on DictateApp are never called by AppKit directly.
+# ── ICON REFRESHER ────────────────────────────────────────────────────────────
+# Root cause of the macOS 26 icon issue: the LaunchServices app-context
+# inherited when launched via `open Dictate.app` suppressed NSStatusItem
+# rendering.  Fix: MacOS/Dictate launcher now uses `& disown; exit 0` so
+# Python re-parents to launchd.  With that fix, a freshly-created
+# NSStatusItem renders correctly; the existing rumps item still doesn't
+# (it was initialised before the context was clean), so we create our own.
+
+_refresh_icon_path = [os.path.join(APP_RESOURCES, "icon_menubar.png")]
+
+
+
+class _IconRefresher(NSObject):
+    """Creates and updates our custom NSStatusItem on the main thread."""
+
+    def createStatusItem_(self, _):
+        """One-time setup: create a fresh NSStatusItem and wire the menu."""
+        try:
+            import objc
+            from AppKit import (NSApplication, NSStatusBar, NSImage,
+                                NSVariableStatusItemLength,
+                                NSEventMaskLeftMouseDown, NSEventMaskRightMouseDown)
+            delegate   = NSApplication.sharedApplication().delegate()
+            rumps_si   = getattr(delegate, 'nsstatusitem', None)
+            rumps_menu = rumps_si.menu() if rumps_si else None
+
+            # Hide the invisible-but-space-consuming rumps item
+            if rumps_si:
+                try: rumps_si.setLength_(0)
+                except Exception: pass
+
+            sb       = NSStatusBar.systemStatusBar()
+            self._si = sb.statusItemWithLength_(NSVariableStatusItemLength)
+
+            # Set initial icon (image only — no title)
+            icon_path = _refresh_icon_path[0]
+            img = NSImage.alloc().initWithContentsOfFile_(icon_path)
+            if img:
+                img.setTemplate_(True)
+                self._si.button().setImage_(img)
+
+            # Wire the nicer WKWebView popover (left-click) and plain menu (right-click)
+            self._popover_ctrl = _PopoverController.alloc().init()
+            self._popover_ctrl.setup(self._si, rumps_menu, "http://127.0.0.1:5001/popover")
+        except Exception as e:
+            print(f"[icon] createStatusItem_ error: {e}", flush=True)
+
+    def refreshIcon_(self, _):
+        """Update the custom status item's image."""
+        try:
+            si = getattr(self, '_si', None)
+            if si is None:
+                return
+            btn = si.button()
+            if btn is None:
+                return
+            from AppKit import NSImage
+            icon_path = _refresh_icon_path[0]
+            img = NSImage.alloc().initWithContentsOfFile_(icon_path)
+            if img:
+                img.setTemplate_("anim" not in os.path.basename(icon_path))
+                btn.setImage_(img)
+        except Exception as e:
+            print(f"[icon] refreshIcon_ error: {e}", flush=True)
+
+
+_icon_refresher = _IconRefresher.alloc().init()
+
+
+# ── PATCH RUMPS DELEGATE (dock-click → open settings) ────────────────────────
+
 def _patch_rumps_reopen():
+    """Add applicationShouldHandleReopen to the rumps NSApp delegate class."""
     try:
         import objc, signal as _sig
         from rumps import rumps as _rumps_mod
@@ -117,8 +186,8 @@ def _patch_rumps_reopen():
             lock = "/tmp/dictate_settings.lock"
             try:
                 pid = int(open(lock).read().strip())
-                os.kill(pid, 0)           # verify process exists
-                os.kill(pid, _sig.SIGUSR1)  # raise existing window
+                os.kill(pid, 0)
+                os.kill(pid, _sig.SIGUSR1)
             except Exception:
                 subprocess.Popen([VENV_PYTHON, _runtime_path("settings_window.py")])
             return True
@@ -141,9 +210,28 @@ def is_setup_complete():
     )
 
 class DictateApp(rumps.App):
+
+    def _refresh_icon(self, icon_path=None):
+        """Dispatch a menu-bar icon update to the main thread.
+
+        icon_path — full path to the PNG to display, or None for the idle icon.
+        Uses _IconRefresher (a proper NSObject subclass) so the ObjC selector is
+        correctly registered — avoids the 'does not respond to selector' crash that
+        classAddMethods caused silently.
+        """
+        try:
+            if icon_path is not None:
+                _refresh_icon_path[0] = icon_path
+            else:
+                _refresh_icon_path[0] = os.path.join(APP_RESOURCES, "icon_menubar.png")
+            _icon_refresher.performSelectorOnMainThread_withObject_waitUntilDone_(
+                b'refreshIcon:', None, False)
+        except Exception as e:
+            print(f"[icon] dispatch error: {e}", flush=True)
+
     def __init__(self):
-        super().__init__("", quit_button=None)
-        self.template       = True
+        _icon_path = os.path.join(APP_RESOURCES, "icon_menubar.png")
+        super().__init__("", icon=_icon_path, template=True, quit_button=None)
         self._enabled       = False
         self._recording     = False
         self._server_proc   = None
@@ -153,20 +241,6 @@ class DictateApp(rumps.App):
         self._anim_frame    = 0
         self._anim_frames   = 6
         self._setup_done    = is_setup_complete()
-
-        _icon_path  = os.path.join(APP_RESOURCES, "icon_menubar.png")
-        self.icon   = _icon_path
-        self.template = True
-
-        # Override Python.app's default icon so NSAlert dialogs show Dictate's icon
-        try:
-            from AppKit import NSApplication, NSImage
-            _dock_icon = os.path.join(APP_RESOURCES, "icon_dock.png")
-            if os.path.exists(_dock_icon):
-                NSApplication.sharedApplication().setApplicationIconImage_(
-                    NSImage.alloc().initWithContentsOfFile_(_dock_icon))
-        except Exception:
-            pass
 
         self._last_text  = ""
         self.toggle_item = rumps.MenuItem("Enable Dictation", callback=self.toggle_dictation)
@@ -294,6 +368,19 @@ class DictateApp(rumps.App):
     # ── NORMAL STARTUP ────────────────────────────────────────────────────────
 
     def _start_backend(self):
+        # Wait for rumps status bar, then create our fresh NSStatusItem.
+        for _ in range(50):  # up to 5 s
+            time.sleep(0.1)
+            try:
+                from AppKit import NSApplication
+                delegate = NSApplication.sharedApplication().delegate()
+                if delegate and getattr(delegate, 'nsstatusitem', None):
+                    _icon_refresher.performSelectorOnMainThread_withObject_waitUntilDone_(
+                        b'createStatusItem:', None, True)
+                    break
+            except Exception:
+                pass
+
         try:
             urllib.request.urlopen("http://localhost:11434", timeout=1)
         except Exception:
@@ -336,15 +423,7 @@ class DictateApp(rumps.App):
         for _ in range(20):
             try:
                 urllib.request.urlopen("http://127.0.0.1:5001", timeout=1)
-                self.template = True
-                self.icon = os.path.join(APP_RESOURCES, "icon_menubar.png")
                 self._open_settings_window()
-                # WKWebView must be created on the main thread — dispatch via NSOperationQueue
-                try:
-                    from Foundation import NSOperationQueue
-                    NSOperationQueue.mainQueue().addOperationWithBlock_(self._setup_popover)
-                except Exception as e:
-                    print(f"Could not dispatch popover setup: {e}")
                 break
             except Exception:
                 time.sleep(0.5)
@@ -373,20 +452,15 @@ class DictateApp(rumps.App):
                 recording = data.get("recording", False)
 
                 if recording:
-                    frame_icon = f"icon_menubar_anim_{self._anim_frame}.png"
                     self._anim_frame = (self._anim_frame + 1) % self._anim_frames
-                    if self._current_icon != "recording":
-                        self._current_icon = "recording"
-                        # Set template=False first so the icon isn't tinted before it loads
-                        self.template = False
-                    self.icon = os.path.join(APP_RESOURCES, frame_icon)
+                    self._current_icon = "recording"
+                    frame_path = os.path.join(APP_RESOURCES,
+                                              f"icon_menubar_anim_{self._anim_frame}.png")
+                    self._refresh_icon(frame_path)
                 else:
-                    if self._current_icon != "icon_menubar.png":
-                        self._current_icon = "icon_menubar.png"
-                        self._anim_frame = 0
-                        # Load icon before re-enabling template to avoid white flash
-                        self.icon = os.path.join(APP_RESOURCES, "icon_menubar.png")
-                        self.template = True
+                    self._anim_frame = 0
+                    self._current_icon = "idle"
+                    self._refresh_icon()  # idle waveform
 
                 if enabled != self._enabled:
                     self._enabled = enabled
@@ -407,7 +481,9 @@ class DictateApp(rumps.App):
                 self.words_item.title = f"{words:,} words today"
 
             except Exception:
-                pass
+                # Server not ready yet — still keep the idle icon alive.
+                self._refresh_icon()
+
             time.sleep(0.15)  # ~6 fps animation
 
     # ── UPDATE CHECKING ───────────────────────────────────────────────────────
@@ -559,19 +635,6 @@ class DictateApp(rumps.App):
     def open_ui(self, _):
         self._open_settings_window()
 
-    def _setup_popover(self):
-        """Hook into the rumps NSStatusItem to show a popover on left click."""
-        try:
-            from AppKit import NSApplication
-            nsapp = NSApplication.sharedApplication().delegate()
-            status_item = nsapp.nsstatusitem
-            menu = status_item.menu()
-            self._popover_ctrl = _PopoverController.alloc().init()
-            self._popover_ctrl.setup(
-                status_item, menu, "http://127.0.0.1:5001/popover")
-        except Exception as e:
-            print(f"Popover setup error: {e}")
-
     def _open_settings_window(self):
         subprocess.Popen([VENV_PYTHON, _runtime_path("settings_window.py")])
 
@@ -601,8 +664,8 @@ class DictateApp(rumps.App):
             try: self._ollama_proc.terminate()
             except Exception: pass
 
-        # Kill overlay processes
-        for name in ("overlay.py",):
+        # Kill child processes (overlay, settings window)
+        for name in ("overlay.py", "settings_window.py"):
             try:
                 r = _sp.run(["pgrep", "-f", name], capture_output=True, text=True)
                 for pid in r.stdout.strip().splitlines():
@@ -617,4 +680,47 @@ class DictateApp(rumps.App):
         rumps.quit_application()
 
 if __name__ == "__main__":
+    # ── Single-instance guard ─────────────────────────────────────────────────
+    _LOCK = os.path.join(APP_DATA_DIR, "app.lock")
+    try:
+        _existing_pid = int(open(_LOCK).read().strip())
+        os.kill(_existing_pid, 0)          # raises if process is gone
+        # Another instance is running — kill it before starting fresh
+        os.kill(_existing_pid, 9)
+        time.sleep(0.3)
+    except Exception:
+        pass
+    with open(_LOCK, "w") as _lf:
+        _lf.write(str(os.getpid()))
+    import atexit as _atexit
+    _atexit.register(lambda: os.unlink(_LOCK) if os.path.exists(_LOCK) else None)
+    # ── Suppress dock icon — Python.app binary shows in dock without this ────
+    try:
+        from AppKit import NSApplication
+        NSApplication.sharedApplication().setActivationPolicy_(1)
+    except Exception:
+        pass
+    # ── Handle SIGTERM from /api/quit (server signals us to quit) ─────────────
+    import signal as _signal
+    def _on_sigterm(sig, frame):
+        # Write quit flag so settings_window polls and closes itself
+        try:
+            with open(os.path.join(APP_DATA_DIR, "quit.flag"), "w") as _f:
+                _f.write("quit")
+        except Exception: pass
+        # Kill child windows
+        try:
+            import subprocess as _sp
+            for _name in ("overlay.py", "settings_window.py"):
+                _r = _sp.run(["pgrep", "-f", _name], capture_output=True, text=True)
+                for _pid in _r.stdout.strip().splitlines():
+                    try: os.kill(int(_pid), 9)
+                    except Exception: pass
+        except Exception: pass
+        try: os.unlink("/tmp/dictate_settings.lock")
+        except Exception: pass
+        try: rumps.quit_application()
+        except Exception: import sys; sys.exit(0)
+    _signal.signal(_signal.SIGTERM, _on_sigterm)
+    # ── Launch ────────────────────────────────────────────────────────────────
     DictateApp().run()

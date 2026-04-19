@@ -73,17 +73,10 @@ MACOS="$APP_BUNDLE/Contents/MacOS"
 rm -rf "$APP_BUNDLE"
 mkdir -p "$MACOS" "$RESOURCES"
 
-# Generate icons
+# Generate icons (only thing needed in the bundle)
 python3 "$SCRIPT_DIR/make_icons.py"
 cp "$SCRIPT_DIR"/icon*.png "$RESOURCES/"
 cp "$SCRIPT_DIR/icon.icns" "$RESOURCES/"
-
-# Copy Python source files into the bundle
-cp "$SCRIPT_DIR/server.py"          "$RESOURCES/"
-cp "$SCRIPT_DIR/overlay.py"         "$RESOURCES/"
-cp "$SCRIPT_DIR/settings_window.py" "$RESOURCES/"
-cp "$SCRIPT_DIR/app.py"             "$RESOURCES/"
-cp "$SCRIPT_DIR/make_icons.py"      "$RESOURCES/"
 
 # Write default config into app data dir
 cat > "$APP_DIR/config.json" << CONFIG
@@ -105,32 +98,28 @@ cat > "$APP_DIR/config.json" << CONFIG
 }
 CONFIG
 
-# Launcher — references files inside the bundle
+# Launcher — runs directly from git source, no file copying needed
 cat > "$MACOS/Dictate" << 'LAUNCHER'
 #!/bin/bash
-BUNDLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-RESOURCES="$BUNDLE_DIR/Resources"
+SOURCE_DIR="$HOME/Documents/dictation"
 DATA_DIR="$HOME/.dictate"
+PYTHON="$DATA_DIR/venv/bin/python3"
 
-# Prefer ~/.dictate/venv; fall back to dev venv for local dev installs
-if [ -x "$DATA_DIR/venv/bin/python3" ]; then
-    PYTHON="$DATA_DIR/venv/bin/python3"
-elif [ -x "$HOME/Documents/dictation/venv/bin/python3" ]; then
-    PYTHON="$HOME/Documents/dictation/venv/bin/python3"
-else
+if [ ! -x "$PYTHON" ]; then
     osascript -e 'display alert "Dictate" message "Python venv not found. Please run install.sh first."'
     exit 1
 fi
 
 mkdir -p "$DATA_DIR"
 
-# Copy resources to data dir if newer (enables bundle-level updates)
-for f in server.py app.py make_icons.py overlay.py settings_window.py; do
-    if [ ! -f "$DATA_DIR/$f" ] || [ "$RESOURCES/$f" -nt "$DATA_DIR/$f" ]; then
-        cp "$RESOURCES/$f" "$DATA_DIR/" 2>/dev/null
-    fi
-done
-cp "$RESOURCES"/icon*.png "$DATA_DIR/" 2>/dev/null
+# Kill any stale Dictate processes from a previous run
+pkill -9 -f "server.py" 2>/dev/null
+pkill -9 -f "settings_window.py" 2>/dev/null
+pkill -9 -f "overlay.py" 2>/dev/null
+rm -f "$DATA_DIR/quit.flag" /tmp/dictate_settings.lock
+
+# Sync icons from source (lightweight, no .py copies needed)
+cp "$SOURCE_DIR"/icon*.png "$DATA_DIR/" 2>/dev/null
 
 # Start Ollama if needed
 if ! curl -s http://localhost:11434 > /dev/null 2>&1; then
@@ -139,9 +128,17 @@ if ! curl -s http://localhost:11434 > /dev/null 2>&1; then
 fi
 
 export APP_DATA_DIR="$DATA_DIR"
-export APP_RESOURCES="$RESOURCES"
+export APP_RESOURCES="$SOURCE_DIR"
 cd "$DATA_DIR"
-exec arch -arm64 "$PYTHON" "$RESOURCES/app.py"
+
+# Launch Python detached from the LaunchServices app-context.
+# `exec` would inherit the LS context from `open Dictate.app`, which causes
+# NSSceneStatusItem (macOS 26+) to suppress menu bar icon rendering.
+# Using `& disown; exit 0` re-parents Python to launchd — no LS context —
+# so NSStatusItem.button().setImage_() renders correctly.
+arch -arm64 "$PYTHON" "$SOURCE_DIR/app.py" > /tmp/dictate_app.log 2>&1 &
+disown
+exit 0
 LAUNCHER
 chmod +x "$MACOS/Dictate"
 
@@ -158,7 +155,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
     <key>CFBundleIconFile</key><string>icon</string>
     <key>CFBundleExecutable</key><string>Dictate</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>LSUIElement</key><false/>
+    <key>LSUIElement</key><true/>
     <key>NSMicrophoneUsageDescription</key><string>Dictate needs microphone access for voice transcription.</string>
     <key>NSAppleEventsUsageDescription</key><string>Dictate needs accessibility access to type text into other apps.</string>
 </dict>

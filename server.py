@@ -384,25 +384,48 @@ def remove_fillers(text):
 
 # ── AUDIO STREAM ──────────────────────────────────────────────────────────────
 
+def _request_mic_permission():
+    """Trigger the native macOS mic permission prompt for this process and wait for the result."""
+    try:
+        from AVFoundation import AVCaptureDevice, AVMediaTypeAudio
+        import threading as _th
+        result = [None]
+        done  = _th.Event()
+        def handler(granted):
+            result[0] = granted
+            done.set()
+        AVCaptureDevice.requestAccessForMediaType_completionHandler_(AVMediaTypeAudio, handler)
+        done.wait(timeout=30)
+        return bool(result[0])
+    except Exception:
+        return False
+
+def _mic_granted():
+    """Return True if this process has been granted mic access."""
+    try:
+        from AVFoundation import AVCaptureDevice, AVMediaTypeAudio
+        return AVCaptureDevice.authorizationStatusForMediaType_(AVMediaTypeAudio) == 3
+    except Exception:
+        return False
+
 def _check_mic_permission():
-    """Returns True if mic access is granted or undetermined. Shows dialog if denied."""
+    """Returns True if mic access is granted. Requests it if not yet determined."""
     try:
         from AVFoundation import AVCaptureDevice, AVMediaTypeAudio
         status = AVCaptureDevice.authorizationStatusForMediaType_(AVMediaTypeAudio)
-        # 0=notDetermined (let sounddevice prompt natively), 1=restricted, 2=denied, 3=authorized
+        # 0=notDetermined, 1=restricted, 2=denied, 3=authorized
+        if status == 3:
+            return True
+        if status == 0:
+            # Not yet asked — request and wait
+            return _request_mic_permission()
         if status == 2:
-            subprocess.Popen([
-                "osascript", "-e",
-                'display dialog "Dictate needs microphone access.\\n\\nGo to System Settings → Privacy & Security → Microphone and enable Dictate." '
-                'buttons {"Open Settings", "Cancel"} default button "Open Settings" with title "Microphone Access Required"\n'
-                'if button returned of result is "Open Settings" then\n'
-                '  do shell script "open \\"x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone\\""\n'
-                'end if'
-            ])
+            subprocess.Popen(["open",
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"])
             return False
-        return True  # notDetermined, restricted, or authorized — let sounddevice handle it
+        return False  # restricted
     except Exception:
-        return True  # Can't check — let sounddevice try and fail naturally
+        return True  # Can't check — let sounddevice try
 
 def _resolve_mic_device():
     """Return the sounddevice device index for the configured mic, or None for system default."""
@@ -495,6 +518,8 @@ def _record_worker():
 
     _ensure_stream()
     if _persistent_stream is None:
+        state["recording"] = False
+        hide_overlay_display()
         return
 
     try:
@@ -1486,6 +1511,14 @@ def api_version():
     return jsonify({"current": APP_VERSION, "latest": latest,
                     "update_available": bool(latest and latest != APP_VERSION)})
 
+@app.route("/api/open_url", methods=["POST"])
+def api_open_url():
+    """Open a URL (e.g. System Preferences) via subprocess — avoids WKWebView window.open() issues."""
+    url = (request.get_json(silent=True) or {}).get("url", "")
+    if url:
+        subprocess.Popen(["open", url])
+    return jsonify({"ok": True})
+
 @app.route("/api/open_settings", methods=["POST"])
 def api_open_settings():
     """Signal app.py to open the settings window."""
@@ -1549,6 +1582,16 @@ def api_errors_clear():
     except Exception: pass
     return jsonify({"ok": True})
 
+@app.route("/api/quit", methods=["POST"])
+def api_quit():
+    """Signal the parent app.py process to quit cleanly."""
+    import signal as _sig
+    try:
+        os.kill(os.getppid(), _sig.SIGTERM)
+    except Exception:
+        pass
+    return jsonify({"ok": True})
+
 @app.route("/popover")
 def popover():
     return POPOVER_HTML
@@ -1591,6 +1634,8 @@ POPOVER_HTML = r"""<!DOCTYPE html>
   .stat .s{font-size:10px;color:var(--dim);margin-top:1px}
   .open-btn{width:100%;padding:9px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.25);border-radius:10px;color:var(--amber);font-size:13px;font-weight:500;cursor:pointer;transition:all .15s}
   .open-btn:hover{background:rgba(245,158,11,.2)}
+  .quit-btn{width:100%;padding:7px;background:none;border:1px solid var(--border);border-radius:10px;color:var(--dim);font-size:12px;cursor:pointer;margin-top:6px;transition:all .15s}
+  .quit-btn:hover{border-color:rgba(239,68,68,.4);color:#ef4444;background:rgba(239,68,68,.06)}
   .recording-dot{width:7px;height:7px;border-radius:50%;background:#ef4444;display:inline-block;animation:blink 1s ease-in-out infinite;margin-right:5px}
   @keyframes blink{0%,100%{opacity:.3}50%{opacity:1}}
 </style>
@@ -1613,6 +1658,7 @@ POPOVER_HTML = r"""<!DOCTYPE html>
   <div class="stat"><div class="n" id="popSessions">0</div><div class="s">sessions</div></div>
 </div>
 <button class="open-btn" onclick="openSettings()">Open Dictate Settings →</button>
+<button class="quit-btn" onclick="quitApp()">Quit Dictate</button>
 <script>
 let _lastText = '';
 async function refresh() {
@@ -1654,6 +1700,9 @@ function copyLast() {
 async function openSettings() {
   await fetch('http://127.0.0.1:5001/api/open_settings', {method:'POST'});
   window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.closePopover && window.webkit.messageHandlers.closePopover.postMessage('close');
+}
+async function quitApp() {
+  await fetch('http://127.0.0.1:5001/api/quit', {method:'POST'}).catch(()=>{});
 }
 refresh();
 setInterval(refresh, 2000);
@@ -2492,7 +2541,7 @@ function applyStatus(data) {
         `<div style="display:flex;align-items:center;gap:8px">` +
         `<span style="color:var(--text);font-weight:500">${p.label}</span>` +
         `<span style="color:var(--dim);flex:1">${p.desc}</span>` +
-        `<button onclick="open('${p.url}')" style="font-size:11px;padding:3px 8px;` +
+        `<button onclick="fetch('/api/open_url',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:'${p.url}'})})" style="font-size:11px;padding:3px 8px;` +
         `border-radius:5px;border:1px solid var(--amber);background:transparent;` +
         `color:var(--amber);cursor:pointer">Open Settings</button></div>`
       ).join('');
