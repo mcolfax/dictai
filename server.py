@@ -401,12 +401,15 @@ def _request_mic_permission():
         return False
 
 def _mic_granted():
-    """Return True if this process has been granted mic access."""
+    """Return True if microphone is accessible (not explicitly denied)."""
     try:
         from AVFoundation import AVCaptureDevice, AVMediaTypeAudio
-        return AVCaptureDevice.authorizationStatusForMediaType_(AVMediaTypeAudio) == 3
+        status = AVCaptureDevice.authorizationStatusForMediaType_(AVMediaTypeAudio)
+        # 0=notDetermined (will prompt on use), 3=authorized — both are OK
+        # Only return False when explicitly denied (2) or restricted (1)
+        return status not in (1, 2)
     except Exception:
-        return False
+        return True  # Can't determine — assume OK
 
 def _check_mic_permission():
     """Returns True if mic access is granted. Requests it if not yet determined."""
@@ -1244,14 +1247,6 @@ def _accessibility_granted() -> bool:
     except Exception:
         return True  # Unknown — assume OK to avoid false negatives
 
-def _mic_granted() -> bool:
-    """Return True if microphone permission is granted."""
-    try:
-        from AVFoundation import AVCaptureDevice, AVMediaTypeAudio
-        status = AVCaptureDevice.authorizationStatusForMediaType_(AVMediaTypeAudio)
-        return status == 3  # 3 = authorized
-    except Exception:
-        return True  # Unknown — assume OK
 
 def start_listener():
     global _kb_listener, _ms_listener
