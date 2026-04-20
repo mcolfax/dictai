@@ -30,9 +30,93 @@ def _log_error(msg):
         pass
 SAMPLE_RATE     = 16000
 OLLAMA_URL      = "http://localhost:11434/api/generate"
-APP_VERSION     = "1.7.0"
+APP_VERSION     = "1.9.0"
 GITHUB_RAW      = "https://raw.githubusercontent.com/mcolfax/dictate/main"
 MAX_RECORD_SECS = 120
+
+FFMPEG_BIN = "/opt/homebrew/bin/ffmpeg"
+
+class FFmpegStream:
+    """
+    Drop-in replacement for sounddevice.InputStream backed by ffmpeg AVFoundation.
+
+    PortAudio (sounddevice) silently returns all-zero audio when run from a
+    background subprocess that lacks a WindowServer/UI session context. ffmpeg
+    with -f avfoundation bypasses this restriction and always captures real data
+    when TCC microphone access is authorized.
+
+    Interface mirrors sd.InputStream: start(), stop(), close(), read(n), .active
+    """
+    CHUNK_BYTES = 3200  # 1600 int16 samples × 2 bytes = 0.1 s at 16 kHz mono
+
+    def __init__(self, samplerate=16000, channels=1, blocksize=1600, device=None):
+        self.samplerate = samplerate
+        self.channels   = channels
+        self.blocksize  = blocksize
+        self._device    = device or ":0"   # ffmpeg avfoundation audio device spec
+        self._proc      = None
+        self._thread    = None
+        self._buf       = bytearray()      # raw bytes accumulator
+        self._lock      = threading.Lock()
+        self.active     = False
+
+    def start(self):
+        cmd = [
+            FFMPEG_BIN,
+            "-f", "avfoundation",
+            "-i", self._device,            # e.g. ":0"
+            "-f", "s16le",
+            "-ar", str(self.samplerate),
+            "-ac", str(self.channels),
+            "pipe:1",                      # raw PCM → stdout
+        ]
+        self._proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        self.active = True
+
+        def _reader():
+            while self.active:
+                chunk = self._proc.stdout.read(self.CHUNK_BYTES)
+                if not chunk:
+                    break
+                with self._lock:
+                    self._buf.extend(chunk)
+                    # Keep at most ~5 s of audio in the buffer to avoid unbounded growth
+                    max_bytes = self.samplerate * self.channels * 2 * 5
+                    if len(self._buf) > max_bytes:
+                        del self._buf[:len(self._buf) - max_bytes]
+
+        self._thread = threading.Thread(target=_reader, daemon=True)
+        self._thread.start()
+
+    def read(self, size):
+        """Return (ndarray[size, channels], overflow) — blocks until enough data arrives."""
+        need = size * self.channels * 2  # bytes
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            with self._lock:
+                if len(self._buf) >= need:
+                    raw  = bytes(self._buf[:need])
+                    del self._buf[:need]
+                    overflow = len(self._buf) > need * 10
+                    arr = np.frombuffer(raw, dtype=np.int16).reshape(size, self.channels)
+                    return arr, overflow
+            time.sleep(0.005)
+        # Timeout — return silence
+        return np.zeros((size, self.channels), dtype=np.int16), False
+
+    def stop(self):
+        self.active = False
+        if self._proc is not None:
+            try: self._proc.terminate()
+            except Exception: pass
+
+    def close(self):
+        self.stop()
+        self._proc = None
 
 # Supported languages (Whisper language codes)
 LANGUAGES = {
@@ -423,14 +507,15 @@ def _check_mic_permission():
             return False
         if status == 1:  # restricted by MDM/parental controls
             return False
-        # status 0 (not determined) or 3 (authorized) — let sounddevice try;
-        # PortAudio will trigger the native dialog on first use if needed.
+        # status 0 (not determined) or 3 (authorized) — let ffmpeg try;
+        # avfoundation will trigger the native dialog on first use if needed.
         return True
     except Exception:
         return True  # Can't check — let sounddevice try
 
 def _resolve_mic_device():
-    """Return the sounddevice device index for the configured mic, or None for system default."""
+    """Return the sounddevice device index for the configured mic, or None for system default.
+    Used only for the device-listing API; actual capture uses FFmpegStream."""
     name = config.get("mic_device")
     if not name:
         return None
@@ -443,23 +528,53 @@ def _resolve_mic_device():
         pass
     return None  # Fall back to system default if not found
 
+def _resolve_mic_device_ffmpeg():
+    """Return the ffmpeg avfoundation audio device spec (e.g. ':0') for the configured mic."""
+    name = config.get("mic_device")
+    if not name:
+        return ":0"
+    try:
+        r = subprocess.run(
+            [FFMPEG_BIN, "-f", "avfoundation", "-list_devices", "true", "-i", ""],
+            capture_output=True, text=True, timeout=5
+        )
+        audio_section = False
+        for line in r.stderr.split("\n"):
+            if "AVFoundation audio devices" in line:
+                audio_section = True
+            elif audio_section:
+                m = re.search(r"\[(\d+)\] (.+)", line)
+                if m:
+                    idx, dev_name = m.group(1), m.group(2).strip()
+                    if dev_name == name:
+                        return f":{idx}"
+    except Exception:
+        pass
+    return ":0"
+
 def _ensure_stream():
     global _persistent_stream
     if _persistent_stream is None or not _persistent_stream.active:
         if not _check_mic_permission():
             return
+        # If TCC is not yet determined, request permission via AVFoundation so
+        # the native dialog appears before ffmpeg tries to open the device.
         try:
-            device = _resolve_mic_device()
-            _persistent_stream = sd.InputStream(
+            from AVFoundation import AVCaptureDevice, AVMediaTypeAudio
+            if AVCaptureDevice.authorizationStatusForMediaType_(AVMediaTypeAudio) == 0:
+                _request_mic_permission()  # blocks up to 30 s for user response
+        except Exception:
+            pass
+        try:
+            device = _resolve_mic_device_ffmpeg()
+            _persistent_stream = FFmpegStream(
                 samplerate=SAMPLE_RATE, channels=1,
-                dtype="int16", blocksize=1600,
-                device=device,
+                blocksize=1600, device=device,
             )
             _persistent_stream.start()
         except Exception as e:
             print(f"⚠️  Stream init error: {e}")
-            if "invalid" in str(e).lower() or "permission" in str(e).lower():
-                _check_mic_permission()
+            _log_error(f"[stream] init error: {e}")
 
 def _close_stream():
     global _persistent_stream
@@ -523,6 +638,9 @@ def _record_worker():
         state["recording"] = False
         hide_overlay_display()
         return
+
+    # Allow ffmpeg a moment to fill its buffer before reading
+    time.sleep(0.4)
 
     try:
         while not _stop_event.is_set() and state["recording"]:
@@ -676,14 +794,21 @@ print(json.dumps({{"text": result["text"], "language": result.get("language", "e
 # ── MIC TEST ──────────────────────────────────────────────────────────────────
 
 def _mic_test_worker():
+    # Always start with a fresh ffmpeg stream for the mic test
+    _close_stream()
     _ensure_stream()
-    if _persistent_stream is None: return
+    if _persistent_stream is None:
+        _log_error("[mic_test] stream is None — aborting")
+        return
+    # Allow ffmpeg a moment to fill its buffer before reading
+    time.sleep(0.6)
     try:
         while state["mic_testing"]:
             chunk, _ = _persistent_stream.read(1600)
             rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
             state["mic_level"] = min(100, int((rms / 32768) * 800))
     except Exception as e:
+        _log_error(f"[mic_test] error: {e}")
         print(f"⚠️  Mic test error: {e}")
 
 def start_mic_test():
@@ -3153,6 +3278,7 @@ if __name__ == "__main__":
     start_listener()
     # Background watchdog: restarts listener when accessibility is granted post-launch
     threading.Thread(target=_accessibility_watchdog, daemon=True).start()
+
     print("━" * 50)
     print("🎤  Dictation server ready")
     print("    Open http://localhost:5001 in Arc")
